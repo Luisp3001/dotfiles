@@ -2,9 +2,9 @@
 local M = {}
 
 M.colors = {
-    bg          = "rgb(101025)",
-    color1          = "rgb(8D3C4D)",
-    color2  = "rgb(c3c3c8)"
+    bg          = "rgb(0b0b19)",
+    color1          = "rgb(D49571)",
+    color2  = "rgb(c2c2c5)"
 }
 
 return M

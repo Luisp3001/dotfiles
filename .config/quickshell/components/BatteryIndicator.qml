@@ -7,6 +7,7 @@ import "../style"
 Item {
     id: root
 
+    visible: false
     implicitWidth: row.implicitWidth
     implicitHeight: row.implicitHeight
 
@@ -40,7 +41,14 @@ Item {
     property color batteryColor: Theme.textPrimary
 
     function updateBattery() {
-        const level = parseInt(capacityFile.text().trim()) || 0;
+        const capacityText = capacityFile.text().trim();
+        if (capacityText === "") {
+            root.visible = false;
+            return;
+        }
+        root.visible = true;
+
+        const level = parseInt(capacityText) || 0;
         const status = statusFile.text().trim();
 
         batteryLevel = level;
@@ -92,3 +100,4 @@ Item {
         }
     }
 }
+
