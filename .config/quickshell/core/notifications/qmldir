@@ -1,0 +1,5 @@
+module core.notifications
+NotificationHandler 1.0 NotificationHandler.qml
+NotifHistoryModel 1.0 NotifHistoryModel.qml
+NotifItem 1.0 NotifItem.qml
+NotificationContent 1.0 NotificationContent.qml

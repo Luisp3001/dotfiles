@@ -1,0 +1,16 @@
+module core.bar
+Bar 1.0 Bar.qml
+LeftSection 1.0 LeftSection.qml
+CenterSection 1.0 CenterSection.qml
+RightSection 1.0 RightSection.qml
+NotificationCenter 1.0 NotificationCenter.qml
+
+CommandPoll 1.0 CommandPoll.qml
+
+PowerSection 1.0 PowerSection.qml
+WifiSection 1.0 WifiSection.qml
+BluetoothSection 1.0 BluetoothSection.qml
+AirdropContent 1.0 AirdropContent.qml
+WallpaperPicker 1.0 WallpaperPicker.qml
+PluginInstallContent 1.0 PluginInstallContent.qml
+PluginsWidget 1.0 PluginsWidget.qml

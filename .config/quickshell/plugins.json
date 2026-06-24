@@ -1,0 +1,44 @@
+{
+  "installed": [
+    {
+      "id": "com.luisp.airdrop",
+      "path": "optional/airdrop",
+      "enabled": true,
+      "name": "AirDrop (LocalSend)",
+      "main": "Main.qml",
+      "type": "widget"
+    },
+    {
+      "id": "com.luisp.screenrec",
+      "path": "optional/screenrec",
+      "enabled": true,
+      "name": "Screen Recorder",
+      "main": "Main.qml",
+      "type": "widget"
+    },
+    {
+      "id": "com.luisp.spotify",
+      "path": "optional/spotify",
+      "enabled": true,
+      "name": "Spotify Player",
+      "main": "Main.qml",
+      "type": "widget"
+    },
+    {
+      "id": "com.luisp.metrics",
+      "path": "optional/metrics",
+      "enabled": false,
+      "name": "System Metrics",
+      "main": "Main.qml",
+      "type": "widget"
+    },
+    {
+      "id": "com.luisp.dock",
+      "path": "optional/dock",
+      "enabled": false,
+      "name": "Application Dock",
+      "main": "Main.qml",
+      "type": "window"
+    }
+  ]
+}

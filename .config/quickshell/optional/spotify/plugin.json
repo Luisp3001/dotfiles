@@ -1,0 +1,9 @@
+{
+  "id": "com.luisp.spotify",
+  "name": "Spotify Player",
+  "description": "Reproductor de Spotify con visualizador CAVA, letras sincronizadas y controles de reproducción.",
+  "version": "1.0.0",
+  "author": "luisp",
+  "main": "Main.qml",
+  "type": "widget"
+}

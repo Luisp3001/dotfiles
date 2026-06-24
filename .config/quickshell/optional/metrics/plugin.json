@@ -1,0 +1,9 @@
+{
+  "id": "com.luisp.metrics",
+  "name": "System Metrics",
+  "description": "Visualizador de métricas del sistema, incluyendo CPU, RAM, temperatura, batería y tiempo de actividad.",
+  "version": "1.0.0",
+  "author": "luisp",
+  "main": "Main.qml",
+  "type": "widget"
+}

@@ -1,0 +1,9 @@
+{
+  "id": "com.luisp.dock",
+  "name": "Application Dock",
+  "version": "1.0.0",
+  "author": "Luis P",
+  "description": "A macOS-style application dock with magnification effects and auto-hide",
+  "main": "Main.qml",
+  "type": "window"
+}

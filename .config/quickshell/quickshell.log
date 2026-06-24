@@ -1,0 +1,6 @@
+[32m  INFO[0m: Launching config: "/home/luisp/.config/quickshell/shell.qml"
+[32m  INFO[0m: Shell ID: "f9e402fa4a8603f7765a4ba310449a07" Path ID "f9e402fa4a8603f7765a4ba310449a07"
+[32m  INFO[0m: Saving logs to "/run/user/1000/quickshell/by-id/mrq29d39gt/log.qslog"
+MESA: warning: Support for this platform is experimental with Xe KMD, bug reports may be ignored.
+[31m ERROR[0m: Failed to load configuration
+[31m ERROR[0m:   caused by @shell.qml[7:1]: module "modules/bar" is not installed

@@ -1,0 +1,188 @@
+/***
+ *    ┓ ┏┏┓┓┏┳┓┏┓┳┓  ┳┓┳┳┳┓┳┓┓ ┏┓┏┓  ┏┓┏┓┏┓
+ *    ┃┃┃┣┫┗┫┣┫┣┫┣┫━━┣┫┃┃┣┫┣┫┃ ┣ ┗┓━━┃ ┗┓┗┓
+ *    ┗┻┛┛┗┗┛┻┛┛┗┛┗  ┻┛┗┛┻┛┻┛┗┛┗┛┗┛  ┗┛┗┛┗┛
+ *                                         
+ */
+
+
+/*------------Defining Colors---------------*/
+@import url("/home/luisp/.cache/wal/colors-waybar.css");
+/*------------Global Properties-----------------*/
+* {
+    border: none;
+    border-radius: 0px;
+    font-family: "JetbrainsMono Nerd Fonts Mono", monospace;
+    font-style: normal;
+    font-size: 14px;
+    min-height: 0;
+}
+
+/*------------Window--------------------*/
+#window{
+    background: @background;
+    padding-left: 15px;
+    padding-right: 15px;
+    border-radius: 18px;
+    margin-top: 5px;
+    margin-bottom: 5px;
+    font-weight: normal;
+    font-style: normal;
+}
+
+
+/*----------Waybar Window------------*/
+window#waybar {
+    background: transparent;
+}
+
+/*-----------Tooltip--------------*/
+tooltip {
+  background: @background;
+  border: 2px solid @color5;
+  border-radius: 12px;
+}
+tooltip label {
+  color: @foreground;
+  padding: 6px;
+}
+
+/*---------Workspaces-----------------*/
+#workspaces {
+    background: @background;
+    margin: 10px 5px 0px 5px;
+    padding: 8px 5px;
+    border-radius: 18px;
+    color: @foreground;
+}
+#workspaces button {
+    font-weight: bold;
+    padding: 0px 8px;
+    margin: 0px 3px;
+    border-radius: 18px;
+    color: transparent;
+    background: @color1;
+    transition: all 0.3s ease-in-out;
+}
+
+#workspaces button.special {
+    font-weight: bold;
+    padding: 0px 8px;
+    margin: 0px 3px;
+    border-radius: 18px;
+    color: @foreground-alt;
+    background: @color1;
+    transition: all 0.3s ease-in-out;
+}
+
+
+#workspaces button.active {
+    font-weight: bold;
+    background-color: @color4;
+    color: @foreground-alt;
+    border-radius: 18px;
+    min-width: 50px;
+    background-size: 400% 400%;
+    transition: all 0.3s ease-in-out;
+}
+
+#workspaces button:hover {
+    font-weight: bold;
+    background-color: @color10;
+    color: @foreground-alt;
+    border-radius: 18px;
+    min-width: 50px;
+    background-size: 400% 400%;
+}
+
+#workspaces button.urgent {
+    font-weight: bold;
+    background-color: @color14;
+    color: @foreground;
+    border-radius: 18px;
+    min-width: 50px;
+    background-size: 400% 400%;
+    transition: all 0.3s ease-in-out;
+}
+
+/*---------------Tray, Clock, Playerctl, Battery, Cpu, Temperature, Colorpicker, Memory, Idle_inhibitor----------------------*/
+#tray, #pulseaudio, #network, #clock, #custom-notifications{
+    color: @foreground;
+    background: @background;
+    font-weight: bold;
+    margin: 10px 5px 0px 5px;
+    border-radius: 18px;
+    padding: 5px 15px 5px 15px;
+    font-size: 15px;
+
+}
+
+#tray menu * {
+    padding: 0px 5px;
+    transition: all .3s ease; 
+}
+
+#tray menu separator {
+    padding: 0px 5px;
+    transition: all .3s ease; 
+}
+
+
+/*-----------Playerctl-------------------*/
+#custom-playerctl.backward, #custom-playerctl.play, #custom-playerctl.foward {
+    background: @background;
+    font-size: 22px;
+}
+#custom-playerctl.backward:hover, #custom-playerctl.play:hover, #custom-playerctl.foward:hover{
+    color: @color5;
+}
+#custom-playerctl.backward {
+    color: @foreground;
+}
+#custom-playerctl.play {
+    color: @foreground;
+    margin-top: 0px;
+    padding: 0px 10px;
+}
+#custom-playerctl.foward {
+    color: @foreground;
+    border-radius: 0px 0px 25px 0px;
+    padding-right: 5px;
+}
+#custom-playerlabel {
+    background: @background;
+    color: @color4;
+    padding: 8px 20px;
+    border-radius: 0px 0px 0px 25px;
+    font-weight: bold;
+}
+
+/*-------------Launcher--------------*/
+#custom-launcher {
+    color: #1793d1;
+    background: @background;
+    margin: 10px 5px 0px 10px;
+    padding: 0px 0px 1px 13px;
+    border-radius: 18px;
+    font-size: 33px;
+}
+
+/*---------------Cava---------------*/
+#custom-cava{
+    background: @background;
+    color: @foreground;
+    padding: 0px 15px 0px 15px;
+    border-radius: 18px;
+    margin: 10px 5px 0px 5px;
+}
+
+#custom-polycat{
+    background: @background;
+    color: @foreground;
+    font-family: Polycat;
+    font-size: 25px;
+    border-radius: 18px;
+    padding: 5px 15px 5px 15px;
+    margin: 10px 5px 0px 5px;
+}
+

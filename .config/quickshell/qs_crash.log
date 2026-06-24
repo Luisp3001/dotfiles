@@ -1,0 +1,11 @@
+[32m  INFO[0m: Launching config: "/home/luisp/.config/quickshell/shell.qml"
+[32m  INFO[0m: Shell ID: "f9e402fa4a8603f7765a4ba310449a07" Path ID "f9e402fa4a8603f7765a4ba310449a07"
+[32m  INFO[0m: Saving logs to "/run/user/1000/quickshell/by-id/vig5sgsqgt/log.qslog"
+MESA: warning: Support for this platform is experimental with Xe KMD, bug reports may be ignored.
+[32m  INFO[0m: Configuration Loaded
+[34m DEBUG[97m qml[0m: PluginManager: Loading plugin: com.luisp.spotify from file:///home/luisp/.config/quickshell/optional/spotify/Main.qml
+[34m DEBUG[97m qml[0m: PluginManager: ✓ Activated plugin: com.luisp.spotify
+[34m DEBUG[97m qml[0m: PluginManager: Loading plugin: com.luisp.metrics from file:///home/luisp/.config/quickshell/optional/metrics/Main.qml
+[34m DEBUG[97m qml[0m: PluginManager: ✓ Activated plugin: com.luisp.metrics
+[34m DEBUG[97m qml[0m: PluginManager: Loaded 4 plugin(s)
+[33m  WARN[97m qt.qpa.services[0m: Failed to register with host portal QDBusError("org.freedesktop.DBus.Error.NameHasNoOwner", "Could not activate remote peer 'org.freedesktop.portal.Desktop': startup job failed")

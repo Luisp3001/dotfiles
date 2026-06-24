@@ -1,0 +1,9 @@
+{
+  "id": "com.luisp.screenrec",
+  "name": "Screen Recorder",
+  "description": "Herramienta para grabar la pantalla (completa o por región) y gestionar las grabaciones.",
+  "version": "1.0.0",
+  "author": "luisp",
+  "main": "Main.qml",
+  "type": "widget"
+}

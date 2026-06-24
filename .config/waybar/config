@@ -1,0 +1,158 @@
+{
+	/*----------Global Properties-------------*/
+	"layer": "top",
+	"position": "top",
+	"spacing": 0,
+	"height": 50,
+	"margin-top": 0,
+	"margin-right": 0,
+	"margin-bottom": 2,
+	"margin-left": 0,
+    "exclusive": true,
+    "no-center": true,
+    "reload_style_on_change": true,
+	/*----------Modules Left----------------*/
+	"modules-left": [
+        "custom/launcher",
+        "hyprland/workspaces",
+		"custom/cava"
+	],
+	/*----------Modules Right--------------*/
+	"modules-right": [
+		"tray",
+        "custom/polycat",
+		"network",
+		"clock"
+	],
+
+	/*----------Hyprland Workspace----------*/
+	"hyprland/workspaces": {
+		"format": "{name}",
+		"on-click": "activate",
+		"on-scroll-down": "hyprctl dispatch workspace e+1",
+		"on-scroll-up": "hyprctl dispatch workspace e-1",
+        "show-special": true
+	},
+
+	/*-----------SwayNC----------------*/
+
+	"custom/notifications": {
+        "format": "󰂚",
+        "tooltip": false,
+        "on-click": "qs ipc call shell toggleNotifCenter"
+		
+	},
+
+
+	/*---------------Launcher-------------*/
+	"custom/launcher": {
+		"format": "󰣇 ",
+		"tooltip": false,
+		"on-click": "~/.config/hypr/scripts_hypr/launcher.sh"
+	},
+
+    /*---------------Playerctl---------------*/
+"custom/playerctl#backward": {
+    "exec": "playerctl -p spotify status 2>/dev/null && echo",
+    "format": "󰙣 ",
+    "interval": 1,
+    "on-click": "playerctl --player=spotify previous",
+    "on-scroll-down": "wpctl set-volume @DEFAULT_SINK@ 5%-",
+    "on-scroll-up": "wpctl set-volume @DEFAULT_SINK@ 5%+",
+    "tooltip": false
+},
+
+"custom/playerctl#foward": {
+    "exec": "playerctl -p spotify status 2>/dev/null",
+    "format": "󰙡 ",
+    "interval": 1,
+    "on-click": "playerctl --player=spotify next",
+    "on-scroll-down": "wpctl set-volume @DEFAULT_SINK@ 5%-",
+    "on-scroll-up": "wpctl set-volume @DEFAULT_SINK@ 5%+",
+    "tooltip": false
+},
+
+    "custom/playerctl#play": {
+		"exec": "playerctl --player=spotify metadata --format '{\"text\": \"{{artist}} - {{markup_escape(title)}}\", \"tooltip\": \"{{playerName}} : {{markup_escape(title)}}\", \"alt\": \"{{status}}\", \"class\": \"{{status}}\"}' -F",
+		"format": "{icon}",
+		"format-icons": {
+			"Paused": "<span> </span>",
+			"Playing": "<span>󰏥 </span>",
+			"Stopped": "<span> </span>"
+		},
+		"on-click": "playerctl --player=spotify play-pause",
+		"on-scroll-down": "wpctl set-volume @DEFAULT_SINK@ 5%-",
+		"on-scroll-up": "wpctl set-volume @DEFAULT_SINK@ 5%+",
+		"return-type": "json"
+	},
+	"custom/playerlabel": {
+		"exec": "playerctl --player=spotify metadata --format '{\"text\": \"{{artist}} - {{markup_escape(title)}}\", \"tooltip\": \"{{playerName}} : {{markup_escape(title)}}\", \"alt\": \"{{status}}\", \"class\": \"{{status}}\"}' -F",
+		"format": "<span>󰎈 {} </span>",
+		"max-length": 40,
+		"on-click": "",
+		"return-type": "json"
+	},
+	/*---------------Pulseaudio------------*/
+	"pulseaudio": {
+		"format": "{icon} {volume}%",
+		"format-icons": {
+			"default": [
+				"󰕿 ",
+				"󰖀 ",
+				"󰕾 "
+			]
+		},
+		"format-muted": "󰝟",
+		"on-click": "pavucontrol",
+		"scroll-step": 5
+	},
+
+	/*--------------Network-----------------*/
+	"network": {
+		"format-disconnected": "󰖪 0% ",
+		"format-ethernet": "󰈀  100% ",
+		"format-linked": "{ifname} (No IP)",
+		"format-wifi": "  {signalStrength}%",
+		"tooltip-format": "Connected to {essid} {ifname} via {gwaddr}",
+		"on-click": "ghostty --title=TermNmtui -e 'sleep 0.1; nmtui'"
+	},
+
+	/*------------Tray--------------------*/
+	"tray": {
+		"icon-size": 20,
+		"spacing": 8,
+        "show-passive-items": true
+	},
+
+	/*------------Clock------------------*/
+	"clock": {
+		"format": "󰥔  {:%I:%M:%S %p} ",
+		"interval": 1,
+        "tooltip": true,
+		"tooltip-format": "<tt>{calendar}</tt>",
+		"calendar": {
+			"format": {
+				"today": "<span color='#d699b6'><b>{}</b></span>"
+			}
+		},
+		"actions": {
+			"on-click-right": "shift_down",
+			"on-click": "shift_up"
+		}
+	},
+
+/*--------------------Cava----------------------*/
+    "custom/cava":{
+        "format": { },
+        "exec": "~/.config/waybar/cava.sh",
+        "tooltip": false
+    },
+
+    "custom/polycat":{
+        "exec": "polycat -c ~/.config/polycat-config/polycat-config -s /proc/stat",
+        "format": "{}",
+        "tooltip": false,
+    },
+
+}
+

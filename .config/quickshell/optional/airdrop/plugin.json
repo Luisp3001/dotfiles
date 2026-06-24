@@ -1,0 +1,9 @@
+{
+  "id": "com.luisp.airdrop",
+  "name": "AirDrop (LocalSend)",
+  "description": "Envía archivos a dispositivos cercanos vía LocalSend. Arrastra archivos a la isla para enviar.",
+  "version": "1.0.0",
+  "author": "luisp",
+  "main": "Main.qml",
+  "type": "widget"
+}

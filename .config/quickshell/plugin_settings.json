@@ -1,0 +1,22 @@
+{
+  "com.luisp.spotify": {
+    "showLyrics": true,
+    "showInIsland": false,
+    "showCava": true,
+    "showBeatAnimation": true,
+    "useGifInsteadOfVinyl": true
+  },
+  "__tabOrder": [
+    "com.luisp.spotify",
+    "com.luisp.metrics",
+    "com.luisp.screenrec",
+    "com.luisp.airdrop"
+  ],
+  "com.luisp.screenrec": {
+    "audioDevice": "alsa_output.pci-0000_00_1f.3-platform-skl_hda_dsp_generic.HiFi__Headphones__sink.monitor",
+    "encodeResolution": "1280x720",
+    "recordAudio": true,
+    "fps": "30",
+    "hideBarIcon": true
+  }
+}

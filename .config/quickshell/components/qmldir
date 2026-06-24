@@ -1,0 +1,11 @@
+module components
+Clock 1.0 Clock.qml
+
+BatteryIndicator 1.0 BatteryIndicator.qml
+WifiIndicator 1.0 WifiIndicator.qml
+
+AppLauncher 1.0 AppLauncher.qml
+Ripple 1.0 Ripple.qml
+DropdownMenu 1.0 DropdownMenu.qml
+DropdownWindow 1.0 DropdownWindow.qml
+PluginManager 1.0 PluginManager.qml
