@@ -1,5 +1,4 @@
 hl.on("hyprland.start", function ()
-    hl.exec_cmd("swww-daemon")
     hl.exec_cmd("clipse -listen")
     hl.exec_cmd("hypridle")
     hl.exec_cmd("awww-daemon")
