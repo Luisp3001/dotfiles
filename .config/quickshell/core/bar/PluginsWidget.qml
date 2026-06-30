@@ -157,7 +157,7 @@ Item {
                             height: 28
                             radius: 6
                             color: settingsMa.containsMouse ? Qt.rgba(1, 1, 1, 0.1) : "transparent"
-                            visible: root.shellRoot && root.shellRoot.pluginManager && root.shellRoot.pluginManager._activeObjects[delegateRoot.pluginId] && root.shellRoot.pluginManager._activeObjects[delegateRoot.pluginId].settingsConfig !== undefined
+                            visible: Boolean(root.shellRoot && root.shellRoot.pluginManager && root.shellRoot.pluginManager._activeObjects[delegateRoot.pluginId] && root.shellRoot.pluginManager._activeObjects[delegateRoot.pluginId].settingsConfig !== undefined)
                             
                             Text {
                                 text: "󰒓"

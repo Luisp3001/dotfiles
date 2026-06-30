@@ -81,7 +81,7 @@ Item {
                 }
             }
         }
-        onExited: { if (exitCode !== 0) { isBusy = false; setStatus("Failed to fetch status", true) } }
+        onExited: (exitCode) => { if (exitCode !== 0) { isBusy = false; setStatus("Failed to fetch status", true) } }
     }
 
     function refreshStatus() { if (isBusy) return; isBusy = true; procStatus.running = true }
@@ -90,7 +90,7 @@ Item {
     Process {
         id: procAction
         stdout: StdioCollector { onStreamFinished: { isBusy = false; refreshStatus() } }
-        onExited: { if (exitCode !== 0) { isBusy = false; setStatus("Action failed", true); refreshStatus() } }
+        onExited: (exitCode) => { if (exitCode !== 0) { isBusy = false; setStatus("Action failed", true); refreshStatus() } }
     }
 
     function runBtCommand(cmdStr) {

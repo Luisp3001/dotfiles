@@ -1,0 +1,9 @@
+{
+  "id": "com.luisp.ollama_ai",
+  "name": "Ollama AI Assistant",
+  "description": "Asistente de IA local con acceso al filesystem usando Gemma4 vía Ollama. Ejecuta comandos con confirmación y soporte de sudo via polkit.",
+  "version": "1.0.0",
+  "author": "luisp",
+  "main": "Main.qml",
+  "type": "widget"
+}

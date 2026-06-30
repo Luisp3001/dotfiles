@@ -69,11 +69,17 @@ Item {
 
     // activeWidget ya no se utiliza porque todos los módulos son plugins dinámicos.
 
-    // Usamos implicitWidth para evitar loops de binding
-    property int sideWidth: Math.max(leftSection.implicitWidth, rightSection.implicitWidth)
-    
-    // Ancho base estándar (usado para calcular paneles expandidos de tamaño consistente)
-    property int normalBaseWidth: (sideWidth * 2) + centerSection.implicitWidth + 160
+    // Ancho real de cada lado (incluyendo márgenes y todos los elementos visibles)
+    // Lado izquierdo: leftSection + margen izquierdo (20) + gap interno (12)
+    property int leftSideWidth: leftSection.implicitWidth + 32
+    // Lado derecho: rightSection + margen derecho (20) + dynamicWidgetsRow + su spacing (12) + gap (12)
+    property int rightSideWidth: rightSection.implicitWidth + 80 + (dynamicWidgetsRow.implicitWidth > 0 ? dynamicWidgetsRow.implicitWidth + 8 : 0)
+
+    // El margen simétrico usa el lado más ancho para que el centro quede perfectamente centrado
+    property int symmetricSideWidth: Math.max(leftSideWidth, rightSideWidth)
+
+    // Ancho base estándar: ambos lados simétricos + ancho del contenido central
+    property int normalBaseWidth: (symmetricSideWidth * 2) + centerSection.implicitWidth
 
     // Ancho de la sección central (ahora siempre el reloj)
     property int activeCenterWidth: centerSection.implicitWidth
@@ -640,6 +646,7 @@ Item {
             }
 
             // ── Centro: Reloj (modo normal, activeWidget === 0) ──
+            // La isla crece dinámicamente con el contenido; el centro siempre está centrado.
             CenterSection {
                 id: centerSection
                 anchors.horizontalCenter: parent.horizontalCenter

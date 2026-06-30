@@ -240,7 +240,7 @@ Item {
                 else setStatus("Networks updated", false)
             }
         }
-        onExited: { if (exitCode !== 0 && scanRunning) { scanRunning = false; processWatchdog.stop(); setStatus("Scan failed", true) } }
+        onExited: (exitCode) => { if (exitCode !== 0 && scanRunning) { scanRunning = false; processWatchdog.stop(); setStatus("Scan failed", true) } }
     }
     function performScan() {
         if (!wifiEnabled) { setStatus("WiFi is off", true); return }
@@ -268,7 +268,7 @@ Item {
                 refreshStatus(); refreshSaved()
             }
         }
-        onExited: { if (exitCode !== 0 && isBusy) { isBusy = false; processWatchdog.stop(); setStatus("Connection failed", true) } }
+        onExited: (exitCode) => { if (exitCode !== 0 && isBusy) { isBusy = false; processWatchdog.stop(); setStatus("Connection failed", true) } }
     }
     Timer { id: statusRefreshDelay; interval: 1500; repeat: false; onTriggered: { refreshStatus(); refreshSaved() } }
 

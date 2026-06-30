@@ -11,7 +11,7 @@
     {
       "id": "com.luisp.screenrec",
       "path": "optional/screenrec",
-      "enabled": true,
+      "enabled": false,
       "name": "Screen Recorder",
       "main": "Main.qml",
       "type": "widget"
@@ -27,7 +27,7 @@
     {
       "id": "com.luisp.metrics",
       "path": "optional/metrics",
-      "enabled": false,
+      "enabled": true,
       "name": "System Metrics",
       "main": "Main.qml",
       "type": "widget"
@@ -39,6 +39,14 @@
       "name": "Application Dock",
       "main": "Main.qml",
       "type": "window"
+    },
+    {
+      "id": "com.luisp.ollama_ai",
+      "path": "optional/ollama_ai",
+      "enabled": true,
+      "name": "Ollama AI Assistant",
+      "main": "Main.qml",
+      "type": "widget"
     }
   ]
 }

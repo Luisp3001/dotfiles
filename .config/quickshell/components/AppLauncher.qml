@@ -615,7 +615,11 @@ Item {
 
                                 readonly property string ic: model.icon || ""
 
-                                // Layer 1: Papirus SVG 64x64 (preferred)
+                                // Icon fallback chain — each layer only loads when the
+                                // previous one has definitively failed (Image.Error),
+                                // preventing "Cannot open" warnings for missing files.
+
+                                // Layer 1: Papirus SVG 64x64 (preferred, ~8000 apps)
                                 Image {
                                     id: iconP64
                                     anchors.fill: parent
@@ -624,39 +628,46 @@ Item {
                                     asynchronous: true; smooth: true
                                     visible: status === Image.Ready
                                 }
-                                // Layer 2: hicolor 128x128 PNG
+                                // Layer 2: Papirus 128x128 PNG (only if layer 1 failed)
                                 Image {
                                     id: iconHi128
                                     anchors.fill: parent
-                                    source: iconArea.ic ? "file:///usr/share/icons/Papirus/128x128/apps/" + iconArea.ic + ".png" : ""
+                                    source: iconP64.status === Image.Error && iconArea.ic
+                                        ? "file:///usr/share/icons/Papirus/128x128/apps/" + iconArea.ic + ".png" : ""
                                     fillMode: Image.PreserveAspectFit
                                     asynchronous: true; smooth: true
-                                    visible: status === Image.Ready && !iconP64.visible
+                                    visible: status === Image.Ready
                                 }
-                                // Layer 3: hicolor 48x48 PNG
+                                // Layer 3: hicolor 48x48 PNG (only if layer 2 failed)
                                 Image {
                                     id: iconHi48
                                     anchors.fill: parent
-                                    source: iconArea.ic ? "file:///usr/share/pixmaps/" + iconArea.ic + ".png" : ""
+                                    source: iconHi128.status === Image.Error && iconArea.ic
+                                        ? "file:///usr/share/icons/hicolor/48x48/apps/" + iconArea.ic + ".png" : ""
                                     fillMode: Image.PreserveAspectFit
                                     asynchronous: true; smooth: true
-                                    visible: status === Image.Ready && !iconP64.visible && !iconHi128.visible
+                                    visible: status === Image.Ready
                                 }
-                                // Layer 4: pixmaps PNG
+                                // Layer 4: /usr/share/pixmaps SVG (only if layer 3 failed)
                                 Image {
-                                    id: iconPixmap
+                                    id: iconPixmaps
                                     anchors.fill: parent
-                                    source: iconArea.ic ? "file:///usr/share/pixmaps/" + iconArea.ic + ".svg" : ""
+                                    source: iconHi48.status === Image.Error && iconArea.ic
+                                        ? "file:///usr/share/pixmaps/" + iconArea.ic + ".png" : ""
                                     fillMode: Image.PreserveAspectFit
                                     asynchronous: true; smooth: true
-                                    visible: status === Image.Ready && !iconP64.visible && !iconHi128.visible && !iconHi48.visible
+                                    visible: status === Image.Ready
                                 }
-                                // Layer 5: Nerd font glyph (last resort)
+                                // Layer 5: Nerd font glyph (last resort — no file I/O)
                                 Text {
                                     anchors.centerIn: parent
                                     visible: iconArea.ic.length > 0
-                                         && !iconP64.visible && !iconHi128.visible && !iconHi48.visible && !iconPixmap.visible
-                                         && iconP64.status !== Image.Loading
+                                         && iconP64.status    !== Image.Loading
+                                         && iconHi128.status  !== Image.Loading
+                                         && iconHi48.status   !== Image.Loading
+                                         && iconPixmaps.status !== Image.Loading
+                                         && !iconP64.visible && !iconHi128.visible
+                                         && !iconHi48.visible && !iconPixmaps.visible
                                     text: "󰣆"
                                     font.family: "Iosevka Nerd Font"
                                     font.pixelSize: 18
