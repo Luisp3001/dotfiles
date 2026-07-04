@@ -61,7 +61,7 @@ except ImportError:
 # ─────────────────────────────────────────────────────────────────────────────
 # Configuración
 # ─────────────────────────────────────────────────────────────────────────────
-MODEL       = "qwen3.5:9b"
+MODEL       = "gemma4:e4b"
 HOME        = str(pathlib.Path.home())
 MAX_FILE    = 8_192   # 8 KiB máx por lectura de archivo
 MAX_DIR     = 4_096   # 4 KiB máx por listado de directorio
@@ -93,7 +93,7 @@ class VoiceManager:
         self.tts_queue = queue.Queue()
         self.tts_thread = None
         self.tts_stop_event = threading.Event()
-        self.model_path = os.path.join(VOICE_DIR, "es_MX-claude-high.onnx")
+        self.model_path = os.path.join(VOICE_DIR, PIPER_MODEL_URL.split("/")[-1])
         
         if VOICE_AVAILABLE:
             os.makedirs(VOICE_DIR, exist_ok=True)
@@ -104,12 +104,13 @@ class VoiceManager:
     def _ensure_piper_model(self):
         if not os.path.exists(self.model_path):
             try:
-                import subprocess
-                # Usar el downloader oficial de piper
-                subprocess.run([sys.executable, "-m", "piper.download_voices", "es_MX-ald-medium"], 
-                               cwd=VOICE_DIR, check=True)
+                import urllib.request
+                print("Descargando modelo de voz...", file=sys.stderr)
+                urllib.request.urlretrieve(PIPER_MODEL_URL, self.model_path)
+                urllib.request.urlretrieve(PIPER_JSON_URL, self.model_path + ".json")
+                print("Modelo descargado con éxito.", file=sys.stderr)
             except Exception as e:
-                pass
+                print(f"Error descargando el modelo: {e}", file=sys.stderr)
         
     def _tts_worker(self):
         # Descargar modelo de voz en este hilo para no bloquear el arranque
@@ -226,6 +227,16 @@ class SpotifyManager:
     def _load_credentials(self):
         """Carga client_id y client_secret desde el archivo de configuración."""
         if not os.path.exists(SPOTIFY_CREDS_FILE):
+            os.makedirs(os.path.dirname(SPOTIFY_CREDS_FILE), exist_ok=True)
+            try:
+                with open(SPOTIFY_CREDS_FILE, "w") as f:
+                    json.dump({
+                        "client_id": "TU_CLIENT_ID_AQUI",
+                        "client_secret": "TU_CLIENT_SECRET_AQUI",
+                        "redirect_uri": "http://localhost:8888/callback"
+                    }, f, indent=4)
+            except Exception as e:
+                print(f"Error creando archivo de credenciales de Spotify: {e}", file=sys.stderr)
             return
         try:
             with open(SPOTIFY_CREDS_FILE, "r") as f:
@@ -927,8 +938,12 @@ def get_relevant_tools(prompt: str, top_k: int = 3) -> list:
 # ─────────────────────────────────────────────────────────────────────────────
 def emit(obj: dict):
     """Envía un objeto JSON al QML vía stdout (línea terminada en \n)."""
-    sys.stdout.write(json.dumps(obj, ensure_ascii=False) + "\n")
-    sys.stdout.flush()
+    try:
+        sys.stdout.write(json.dumps(obj, ensure_ascii=False) + "\n")
+        sys.stdout.flush()
+    except BrokenPipeError:
+        import os
+        os._exit(0)
 
 def emit_error(msg: str):
     emit({"type": "error", "message": msg})
@@ -1314,8 +1329,14 @@ class BackendHTTPHandler(BaseHTTPRequestHandler):
         pass # Silenciar logs
 
 def run_server():
-    server = HTTPServer(('127.0.0.1', 11435), BackendHTTPHandler)
-    server.serve_forever()
+    try:
+        HTTPServer.allow_reuse_address = True
+        server = HTTPServer(('127.0.0.1', 11435), BackendHTTPHandler)
+        server.serve_forever()
+    except Exception as e:
+        print(f"Server error: {e}", file=sys.stderr)
+        import os
+        os._exit(1)
 
 def main():
     emit({"type": "ready", "model": MODEL, "home": HOME})
