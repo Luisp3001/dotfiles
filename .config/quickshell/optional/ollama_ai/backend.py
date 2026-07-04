@@ -33,14 +33,581 @@ import queue
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import ollama
+import chromadb
+try:
+    from ddgs import DDGS
+    WEB_SEARCH_AVAILABLE = True
+except ImportError:
+    WEB_SEARCH_AVAILABLE = False
+
+import numpy as np
+import urllib.request
+import urllib.parse
+import tempfile
+import time
+import webbrowser
+import hashlib
+import base64
+import secrets
+try:
+    import sounddevice as sd
+    import soundfile as sf
+    from pywhispercpp.model import Model
+    from piper import PiperVoice
+    VOICE_AVAILABLE = True
+except ImportError:
+    VOICE_AVAILABLE = False
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Configuración
 # ─────────────────────────────────────────────────────────────────────────────
-MODEL       = "Gemma4:e4b"
+MODEL       = "qwen3.5:9b"
 HOME        = str(pathlib.Path.home())
 MAX_FILE    = 8_192   # 8 KiB máx por lectura de archivo
 MAX_DIR     = 4_096   # 4 KiB máx por listado de directorio
+
+# Spotify
+SPOTIFY_CONFIG_DIR  = os.path.join(HOME, ".config", "spotify_minerva")
+SPOTIFY_CREDS_FILE  = os.path.join(SPOTIFY_CONFIG_DIR, "credentials.json")
+SPOTIFY_TOKEN_FILE  = os.path.join(SPOTIFY_CONFIG_DIR, "token_cache.json")
+SPOTIFY_API_BASE    = "https://api.spotify.com/v1"
+SPOTIFY_AUTH_URL    = "https://accounts.spotify.com/authorize"
+SPOTIFY_TOKEN_URL   = "https://accounts.spotify.com/api/token"
+SPOTIFY_SCOPES      = "user-read-playback-state user-modify-playback-state user-read-currently-playing streaming app-remote-control user-read-private playlist-modify-public"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# VOZ: STT y TTS
+# ─────────────────────────────────────────────────────────────────────────────
+VOICE_DIR = os.path.join(HOME, ".local", "share", "quickshell", "minerva_voice")
+PIPER_MODEL_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/main/es/es_ES/carlota/x_low/es_ES-carlota-x_low.onnx"
+PIPER_JSON_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/main/es/es_ES/carlota/x_low/es_ES-carlota-x_low.onnx.json"
+
+class VoiceManager:
+    def __init__(self):
+        self.is_recording = False
+        self.audio_data = []
+        self.samplerate = 16000
+        self.stream = None
+        self.whisper_model = None
+        self.piper_voice = None
+        self.tts_queue = queue.Queue()
+        self.tts_thread = None
+        self.tts_stop_event = threading.Event()
+        self.model_path = os.path.join(VOICE_DIR, "es_MX-claude-high.onnx")
+        
+        if VOICE_AVAILABLE:
+            os.makedirs(VOICE_DIR, exist_ok=True)
+            # Iniciar TTS worker en hilo separado (descarga modelo si es necesario)
+            self.tts_thread = threading.Thread(target=self._tts_worker, daemon=True)
+            self.tts_thread.start()
+            
+    def _ensure_piper_model(self):
+        if not os.path.exists(self.model_path):
+            try:
+                import subprocess
+                # Usar el downloader oficial de piper
+                subprocess.run([sys.executable, "-m", "piper.download_voices", "es_MX-ald-medium"], 
+                               cwd=VOICE_DIR, check=True)
+            except Exception as e:
+                pass
+        
+    def _tts_worker(self):
+        # Descargar modelo de voz en este hilo para no bloquear el arranque
+        self._ensure_piper_model()
+        try:
+            self.piper_voice = PiperVoice.load(self.model_path)
+        except Exception as e:
+            print(f"Error cargando modelo TTS en worker: {e}", file=sys.stderr)
+            return
+            
+        while True:
+            text = self.tts_queue.get()
+            if text is None: break
+            if self.tts_stop_event.is_set():
+                self.tts_queue.task_done()
+                continue
+                
+            try:
+                import wave
+                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+                    tmp_name = tmp.name
+                
+                with wave.open(tmp_name, "wb") as wav_file:
+                    self.piper_voice.synthesize_wav(text, wav_file)
+                
+                if not self.tts_stop_event.is_set():
+                    data, fs = sf.read(tmp_name, dtype='float32')
+                    sd.play(data, fs)
+                    sd.wait()
+                os.remove(tmp_name)
+            except Exception as e:
+                import traceback
+                print(f"ERROR EN TTS WORKER: {e}", file=sys.stderr)
+                traceback.print_exc(file=sys.stderr)
+                try: os.remove(tmp_name)
+                except: pass
+            self.tts_queue.task_done()
+            
+    def stop_tts(self):
+        if not VOICE_AVAILABLE: return
+        self.tts_stop_event.set()
+        sd.stop()
+        while not self.tts_queue.empty():
+            try: self.tts_queue.get_nowait()
+            except: pass
+            
+    def audio_callback(self, indata, frames, time, status):
+        self.audio_data.append(indata.copy())
+
+    def toggle_recording(self):
+        if not VOICE_AVAILABLE:
+            return None
+            
+        if not self.is_recording:
+            self.stop_tts()
+            self.tts_stop_event.clear()
+            self.is_recording = True
+            self.audio_data = []
+            self.stream = sd.InputStream(samplerate=self.samplerate, channels=1, callback=self.audio_callback)
+            self.stream.start()
+            return "started"
+        else:
+            self.is_recording = False
+            if self.stream:
+                self.stream.stop()
+                self.stream.close()
+            
+            if not self.audio_data:
+                return "empty"
+                
+            audio_np = np.concatenate(self.audio_data, axis=0)
+            
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+                sf.write(tmp.name, audio_np, self.samplerate)
+                tmp_name = tmp.name
+                
+            if not self.whisper_model:
+                try:
+                    self.whisper_model = Model("base", print_realtime=False, print_progress=False)
+                except Exception:
+                    os.remove(tmp_name)
+                    return "error"
+                
+            try:
+                segments = self.whisper_model.transcribe(tmp_name)
+                text = " ".join([s.text for s in segments]).strip()
+            except Exception:
+                text = "error"
+            finally:
+                os.remove(tmp_name)
+            
+            return text
+
+voice_mgr = VoiceManager()
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Spotify Manager — OAuth 2.0 PKCE + API
+# ─────────────────────────────────────────────────────────────────────────────
+class SpotifyManager:
+    """Gestiona la autenticación OAuth 2.0 PKCE y las llamadas a la API de Spotify."""
+
+    def __init__(self):
+        self.access_token = None
+        self.refresh_token = None
+        self.token_expiry = 0
+        self.client_id = None
+        self.client_secret = None
+        self.redirect_uri = "http://localhost:8888/callback"
+        self._auth_server = None
+        self._auth_code = None
+        self._load_credentials()
+        self._load_cached_token()
+
+    def _load_credentials(self):
+        """Carga client_id y client_secret desde el archivo de configuración."""
+        if not os.path.exists(SPOTIFY_CREDS_FILE):
+            return
+        try:
+            with open(SPOTIFY_CREDS_FILE, "r") as f:
+                creds = json.load(f)
+            self.client_id = creds.get("client_id", "").strip()
+            self.client_secret = creds.get("client_secret", "").strip()
+            self.redirect_uri = creds.get("redirect_uri", self.redirect_uri).strip()
+            # Validar que no sean placeholders
+            if self.client_id in ("", "TU_CLIENT_ID_AQUI"):
+                self.client_id = None
+            if self.client_secret in ("", "TU_CLIENT_SECRET_AQUI"):
+                self.client_secret = None
+        except Exception:
+            pass
+
+    def _load_cached_token(self):
+        """Carga tokens desde cache en disco."""
+        if not os.path.exists(SPOTIFY_TOKEN_FILE):
+            return
+        try:
+            with open(SPOTIFY_TOKEN_FILE, "r") as f:
+                data = json.load(f)
+            self.access_token = data.get("access_token")
+            self.refresh_token = data.get("refresh_token")
+            self.token_expiry = data.get("token_expiry", 0)
+        except Exception:
+            pass
+
+    def _save_token_cache(self):
+        """Persiste tokens en disco."""
+        os.makedirs(SPOTIFY_CONFIG_DIR, exist_ok=True)
+        try:
+            with open(SPOTIFY_TOKEN_FILE, "w") as f:
+                json.dump({
+                    "access_token": self.access_token,
+                    "refresh_token": self.refresh_token,
+                    "token_expiry": self.token_expiry
+                }, f)
+        except Exception:
+            pass
+
+    def is_configured(self) -> bool:
+        """Verifica si las credenciales de Spotify están configuradas."""
+        return bool(self.client_id and self.client_secret)
+
+    def is_authenticated(self) -> bool:
+        """Verifica si hay un token válido (o refrescable)."""
+        return bool(self.access_token or self.refresh_token)
+
+    def _token_expired(self) -> bool:
+        return time.time() >= self.token_expiry
+
+    def _refresh_access_token(self) -> bool:
+        """Refresca el access token usando el refresh token."""
+        if not self.refresh_token or not self.client_id:
+            return False
+        try:
+            data = urllib.parse.urlencode({
+                "grant_type": "refresh_token",
+                "refresh_token": self.refresh_token,
+                "client_id": self.client_id,
+                "client_secret": self.client_secret
+            }).encode()
+            req = urllib.request.Request(SPOTIFY_TOKEN_URL, data=data, method="POST")
+            req.add_header("Content-Type", "application/x-www-form-urlencoded")
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                token_data = json.loads(resp.read().decode())
+            self.access_token = token_data["access_token"]
+            self.token_expiry = time.time() + token_data.get("expires_in", 3600) - 60
+            if "refresh_token" in token_data:
+                self.refresh_token = token_data["refresh_token"]
+            self._save_token_cache()
+            return True
+        except Exception:
+            return False
+
+    def _get_valid_token(self) -> str:
+        """Obtiene un token válido, refrescando si es necesario."""
+        if self._token_expired() and self.refresh_token:
+            self._refresh_access_token()
+        return self.access_token
+
+    def _api_request(self, method: str, endpoint: str, body: dict = None, params: dict = None, timeout: int = 10) -> dict:
+        """Hace una petición autenticada a la API de Spotify."""
+        token = self._get_valid_token()
+        if not token:
+            return {"error": "No hay token de Spotify. Necesitas autenticarte primero."}
+
+        url = f"{SPOTIFY_API_BASE}{endpoint}"
+        if params:
+            url += "?" + urllib.parse.urlencode(params)
+
+        body_bytes = json.dumps(body).encode() if body else None
+        req = urllib.request.Request(url, data=body_bytes, method=method)
+        req.add_header("Authorization", f"Bearer {token}")
+        if body:
+            req.add_header("Content-Type", "application/json")
+
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                # Cualquier 2xx sin cuerpo (incluyendo 200, 202, 204) es éxito
+                raw = resp.read()
+                if not raw:
+                    return {"success": True}
+                try:
+                    return json.loads(raw.decode())
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    # Respuesta 2xx con cuerpo no-JSON: igualmente un éxito
+                    return {"success": True}
+        except urllib.error.HTTPError as e:
+            error_body = e.read().decode() if e.fp else ""
+            # Si es 401, intentar refresh y reintentar una vez
+            if e.code == 401 and self._refresh_access_token():
+                return self._api_request(method, endpoint, body, params, timeout)
+            return {"error": f"Error HTTP {e.code}: {error_body[:500]}"}
+        except Exception as e:
+            return {"error": f"Error de conexión: {e}"}
+
+    def authenticate(self) -> str:
+        """Inicia el flujo OAuth 2.0 Authorization Code. Abre el navegador y espera el callback."""
+        if not self.is_configured():
+            return ("Spotify no está configurado. Edita el archivo "
+                    f"{SPOTIFY_CREDS_FILE} con tu client_id y client_secret "
+                    "de https://developer.spotify.com/dashboard")
+
+        # Generar code_verifier y code_challenge para PKCE
+        code_verifier = secrets.token_urlsafe(64)[:128]
+        code_challenge = base64.urlsafe_b64encode(
+            hashlib.sha256(code_verifier.encode()).digest()
+        ).rstrip(b"=").decode()
+
+        state = secrets.token_urlsafe(16)
+
+        auth_params = urllib.parse.urlencode({
+            "client_id": self.client_id,
+            "response_type": "code",
+            "redirect_uri": self.redirect_uri,
+            "scope": SPOTIFY_SCOPES,
+            "state": state,
+            "code_challenge_method": "S256",
+            "code_challenge": code_challenge
+        })
+        auth_url = f"{SPOTIFY_AUTH_URL}?{auth_params}"
+
+        # Servidor HTTP temporal para capturar el callback
+        auth_result = {"code": None, "error": None}
+
+        class CallbackHandler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+                if "code" in query:
+                    auth_result["code"] = query["code"][0]
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/html; charset=utf-8")
+                    self.end_headers()
+                    self.wfile.write(b"<html><body><h2>Autorizacion exitosa! Puedes cerrar esta ventana.</h2></body></html>")
+                else:
+                    auth_result["error"] = query.get("error", ["unknown"])[0]
+                    self.send_response(400)
+                    self.end_headers()
+                    self.wfile.write(b"Error en la autorizacion")
+            def log_message(self, fmt, *args):
+                pass
+
+        try:
+            server = HTTPServer(("127.0.0.1", 8888), CallbackHandler)
+            server.timeout = 120  # 2 minutos para que el usuario autorice
+
+            # Abrir navegador
+            webbrowser.open(auth_url)
+
+            # Esperar el callback
+            while auth_result["code"] is None and auth_result["error"] is None:
+                server.handle_request()
+
+            server.server_close()
+
+            if auth_result["error"]:
+                return f"Error de autorización: {auth_result['error']}"
+
+            # Intercambiar código por tokens
+            token_data = urllib.parse.urlencode({
+                "grant_type": "authorization_code",
+                "code": auth_result["code"],
+                "redirect_uri": self.redirect_uri,
+                "client_id": self.client_id,
+                "client_secret": self.client_secret,
+                "code_verifier": code_verifier
+            }).encode()
+
+            req = urllib.request.Request(SPOTIFY_TOKEN_URL, data=token_data, method="POST")
+            req.add_header("Content-Type", "application/x-www-form-urlencoded")
+
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                tokens = json.loads(resp.read().decode())
+
+            self.access_token = tokens["access_token"]
+            self.refresh_token = tokens.get("refresh_token")
+            self.token_expiry = time.time() + tokens.get("expires_in", 3600) - 60
+            self._save_token_cache()
+
+            return "Autenticación con Spotify exitosa."
+
+        except OSError as e:
+            if "Address already in use" in str(e):
+                return "El puerto 8888 está en uso. Cierra cualquier proceso que lo esté usando e intenta de nuevo."
+            return f"Error al iniciar servidor de callback: {e}"
+        except Exception as e:
+            return f"Error durante la autenticación: {e}"
+
+    # ── Métodos de la API ──────────────────────────────────────────────────
+
+    def search(self, query: str, search_type: str = "track", limit: int = 5) -> str:
+        """Busca en Spotify y devuelve resultados formateados."""
+        valid_types = {"track", "artist", "album", "playlist"}
+        if search_type not in valid_types:
+            search_type = "track"
+        limit = max(1, min(10, limit))
+
+        result = self._api_request("GET", "/search", params={
+            "q": query,
+            "type": search_type,
+            "limit": limit,
+            "market": "from_token"
+        })
+
+        if "error" in result:
+            return result["error"]
+
+        lines = [f"Resultados de Spotify para '{query}' (tipo: {search_type}):\n"]
+        items_key = f"{search_type}s"
+        items = result.get(items_key, {}).get("items", [])
+
+        if not items:
+            return f"No se encontraron resultados para '{query}'"
+
+        for i, item in enumerate(items, 1):
+            if search_type == "track":
+                artists = ", ".join(a["name"] for a in item.get("artists", []))
+                album = item.get("album", {}).get("name", "")
+                duration_ms = item.get("duration_ms", 0)
+                mins, secs = divmod(duration_ms // 1000, 60)
+                uri = item.get("uri", "")
+                lines.append(f"[{i}] {item['name']} — {artists}")
+                lines.append(f"    Album: {album} | Duracion: {mins}:{secs:02d}")
+                lines.append(f"    URI: {uri}")
+            elif search_type == "artist":
+                genres = ", ".join(item.get("genres", [])[:3]) or "Sin genero"
+                followers = item.get("followers", {}).get("total", 0)
+                uri = item.get("uri", "")
+                lines.append(f"[{i}] {item['name']}")
+                lines.append(f"    Generos: {genres} | Seguidores: {followers:,}")
+                lines.append(f"    URI: {uri}")
+            elif search_type == "album":
+                artists = ", ".join(a["name"] for a in item.get("artists", []))
+                year = item.get("release_date", "")[:4]
+                tracks = item.get("total_tracks", 0)
+                uri = item.get("uri", "")
+                lines.append(f"[{i}] {item['name']} — {artists}")
+                lines.append(f"    Año: {year} | Canciones: {tracks}")
+                lines.append(f"    URI: {uri}")
+            elif search_type == "playlist":
+                owner = item.get("owner", {}).get("display_name", "")
+                total = item.get("tracks", {}).get("total", 0)
+                uri = item.get("uri", "")
+                lines.append(f"[{i}] {item['name']}")
+                lines.append(f"    Por: {owner} | Canciones: {total}")
+                lines.append(f"    URI: {uri}")
+            lines.append("")
+
+        return "\n".join(lines).strip()
+
+    def play(self, uri: str = None, query: str = None) -> str:
+        """Reproduce una canción, álbum o playlist. Puede recibir un URI directo o buscar por query."""
+        body = {}
+
+        if not uri and query:
+            # Buscar primero y usar el resultado más popular
+            search_result = self._api_request("GET", "/search", params={
+                "q": query, "type": "track", "limit": 10, "market": "from_token"
+            })
+            if "error" in search_result:
+                return search_result["error"]
+            tracks = search_result.get("tracks", {}).get("items", [])
+            if not tracks:
+                return f"No se encontro ninguna cancion para '{query}'"
+            
+            tracks.sort(key=lambda x: x.get("popularity", 0), reverse=True)
+            uri = tracks[0]["uri"]
+            track_name = tracks[0]["name"]
+            artist_name = ", ".join(a["name"] for a in tracks[0].get("artists", []))
+
+        if uri:
+            if ":track:" in uri:
+                body["uris"] = [uri]
+            elif ":album:" in uri or ":playlist:" in uri or ":artist:" in uri:
+                body["context_uri"] = uri
+            else:
+                body["uris"] = [uri]
+
+        result = self._api_request("PUT", "/me/player/play", body=body if body else None, timeout=20)
+
+        if "error" in result:
+            return result["error"]
+
+        if not query and not uri:
+            return "Reproduccion reanudada. La accion fue exitosa, NO repitas la llamada."
+        if query:
+            return f"Reproduciendo: {track_name} — {artist_name}. La accion fue exitosa, NO repitas la llamada."
+        return "Reproduccion iniciada. La accion fue exitosa, NO repitas la llamada."
+
+    def pause(self) -> str:
+        result = self._api_request("PUT", "/me/player/pause", timeout=20)
+        return result.get("error", "Reproduccion pausada. La accion fue exitosa, NO repitas la llamada.")
+
+    def resume(self) -> str:
+        result = self._api_request("PUT", "/me/player/play", timeout=20)
+        return result.get("error", "Reproduccion reanudada. La accion fue exitosa, NO repitas la llamada.")
+
+    def next_track(self) -> str:
+        result = self._api_request("POST", "/me/player/next", timeout=20)
+        return result.get("error", "Siguiente cancion. La accion fue exitosa, NO repitas la llamada.")
+
+    def previous_track(self) -> str:
+        result = self._api_request("POST", "/me/player/previous", timeout=20)
+        return result.get("error", "Cancion anterior. La accion fue exitosa, NO repitas la llamada.")
+
+    def set_volume(self, volume: int) -> str:
+        volume = max(0, min(100, volume))
+        result = self._api_request("PUT", "/me/player/volume", params={"volume_percent": volume}, timeout=20)
+        return result.get("error", f"Volumen establecido al {volume}%. La accion fue exitosa, NO repitas la llamada.")
+
+    def current_playing(self) -> str:
+        result = self._api_request("GET", "/me/player/currently-playing")
+        if "error" in result:
+            return result["error"]
+        if not result or not result.get("item"):
+            return "No se esta reproduciendo nada en este momento."
+
+        item = result["item"]
+        name = item.get("name", "Desconocido")
+        artists = ", ".join(a["name"] for a in item.get("artists", []))
+        album = item.get("album", {}).get("name", "")
+        progress = result.get("progress_ms", 0)
+        duration = item.get("duration_ms", 0)
+        p_min, p_sec = divmod(progress // 1000, 60)
+        d_min, d_sec = divmod(duration // 1000, 60)
+        is_playing = result.get("is_playing", False)
+        state = "Reproduciendo" if is_playing else "Pausado"
+
+        return (f"{state}: {name} — {artists}\n"
+                f"Album: {album}\n"
+                f"Progreso: {p_min}:{p_sec:02d} / {d_min}:{d_sec:02d}")
+
+    def add_to_queue(self, uri: str = None, query: str = None) -> str:
+        if not uri and query:
+            search_result = self._api_request("GET", "/search", params={
+                "q": query, "type": "track", "limit": 10, "market": "US"
+            })
+            if "error" in search_result:
+                return search_result["error"]
+            tracks = search_result.get("tracks", {}).get("items", [])
+            if not tracks:
+                return f"No se encontro ninguna cancion para '{query}'"
+            
+            tracks.sort(key=lambda x: x.get("popularity", 0), reverse=True)
+            uri = tracks[0]["uri"]
+            track_name = tracks[0]["name"]
+            artist_name = ", ".join(a["name"] for a in tracks[0].get("artists", []))
+
+        if not uri:
+            return "Se necesita un URI o una consulta de busqueda para agregar a la cola."
+
+        result = self._api_request("POST", "/me/player/queue", params={"uri": uri}, timeout=20)
+        if "error" in result:
+            return result["error"]
+        if query:
+            return f"Cancion agregada exitosamente a la cola: {track_name} — {artist_name} (uri={uri}). La accion fue exitosa, NO repitas la llamada."
+        return f"Cancion con uri={uri} agregada exitosamente a la cola. La accion fue exitosa, NO repitas la llamada."
+
+
+spotify_mgr = SpotifyManager()
 
 # Patrones de comandos peligrosos
 DESTRUCTIVE_RE = re.compile(
@@ -69,6 +636,29 @@ SYSTEM_PROMPT = f"""Eres Minerva, una asistente inteligente integrada en el escr
 - Si el usuario te pide algo, actúa primero y después explica brevemente el resultado si es necesario.
 - No hagas preguntas innecesarias. Si puedes resolver algo con la información disponible, hazlo.
 - Sé breve. Las respuestas largas y redundantes aburren. Ve al grano.
+- **NUNCA uses formato markdown (como asteriscos, negritas o cursivas).** El usuario te escucha a través de voz y los símbolos se leerían en voz alta (ej: "asterisco hola asterisco"). Genera solo texto plano.
+
+## Herramientas disponibles
+- **Filesystem**: Puedes listar directorios (list_dir) y leer archivos (read_file) dentro de {HOME}.
+- **Comandos**: Puedes ejecutar comandos bash (run_command). Los destructivos o con sudo pedirán confirmación.
+- **Búsqueda web** (web_search): Tienes acceso a internet en tiempo real. Úsala cuando:
+  - El usuario pregunte por noticias, eventos recientes o información que puede haber cambiado.
+  - Necesites precios, versiones de software, estadísticas actuales, o cualquier dato perecedero.
+  - Tu conocimiento interno pueda estar desactualizado.
+  - Te pregunten "¿cuál es la última versión de...?", "¿qué pasó con...?", "precio de...", etc.
+  - NO la uses para información atemporal o conceptual que ya conoces.
+- **Spotify** (spotify_music): Controla Spotify del usuario. Acciones disponibles:
+  - "search": Buscar canciones, artistas, albums o playlists. Requiere "query".
+  - "play": Reproducir. Puedes pasar un "uri" de Spotify o un "query" para buscar y reproducir directamente.
+  - "pause": Pausar la reproduccion actual.
+  - "resume": Reanudar la reproduccion.
+  - "next": Saltar a la siguiente cancion.
+  - "previous": Volver a la cancion anterior.
+  - "volume": Cambiar volumen. Requiere "volume" (0-100).
+  - "current": Ver que se esta reproduciendo ahora.
+  - "queue": Agregar una cancion a la cola. Usa "uri" o "query".
+  - Si el usuario pide musica de un artista o cancion especifica, usa "play" con query directamente.
+  - Requiere Spotify Premium para controles de reproduccion.
 
 ## Reglas de seguridad
 - Solo puedes acceder a archivos dentro de {HOME}
@@ -81,6 +671,7 @@ SYSTEM_PROMPT = f"""Eres Minerva, una asistente inteligente integrada en el escr
 - Home del usuario: {HOME}
 - Sistema operativo: Arch Linux
 - Shell: bash
+- Fecha/hora actual: {{fecha_actual}}
 """
 
 OLLAMA_TOOLS = [
@@ -134,8 +725,202 @@ OLLAMA_TOOLS = [
                 "required": ["command"]
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "web_search",
+            "description": "Busca información actualizada en internet usando DuckDuckGo. Úsala para noticias, versiones de software, precios, eventos recientes, o cualquier información que pueda haber cambiado desde tu entrenamiento.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "La consulta de búsqueda en lenguaje natural o palabras clave"
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Número máximo de resultados a devolver (1-10, por defecto 5)"
+                    }
+                },
+                "required": ["query"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "spotify_music",
+            "description": "Controla Spotify: buscar musica, reproducir, pausar, saltar cancion, volumen, ver que suena. Requiere Spotify Premium para reproduccion.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "description": "La accion a realizar: 'search', 'play', 'pause', 'resume', 'next', 'previous', 'volume', 'current', 'queue'",
+                        "enum": ["search", "play", "pause", "resume", "next", "previous", "volume", "current", "queue"]
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "Texto de busqueda (para 'search', 'play', 'queue'). Ej: 'Bohemian Rhapsody Queen'"
+                    },
+                    "uri": {
+                        "type": "string",
+                        "description": "URI de Spotify (ej: 'spotify:track:xxx'). Opcional si se proporciona query."
+                    },
+                    "search_type": {
+                        "type": "string",
+                        "description": "Tipo de busqueda: 'track', 'artist', 'album', 'playlist'. Por defecto 'track'."
+                    },
+                    "volume": {
+                        "type": "integer",
+                        "description": "Nivel de volumen 0-100 (solo para accion 'volume')"
+                    }
+                },
+                "required": ["action"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delete_file",
+            "description": "Elimina un archivo o directorio vacío de forma permanente (solo dentro de HOME)",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "La ruta absoluta del archivo o directorio a eliminar"
+                    }
+                },
+                "required": ["path"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_directory",
+            "description": "Crea un nuevo directorio (solo dentro de HOME)",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "La ruta absoluta del directorio a crear"
+                    }
+                },
+                "required": ["path"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "move_file",
+            "description": "Mueve o renombra un archivo o directorio (solo dentro de HOME)",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "source": {
+                        "type": "string",
+                        "description": "La ruta absoluta de origen"
+                    },
+                    "destination": {
+                        "type": "string",
+                        "description": "La ruta absoluta de destino"
+                    }
+                },
+                "required": ["source", "destination"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "find_files",
+            "description": "Busca archivos o directorios por patrón de nombre",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "directory": {
+                        "type": "string",
+                        "description": "Directorio donde iniciar la busqueda"
+                    },
+                    "pattern": {
+                        "type": "string",
+                        "description": "El patron de busqueda, ej: '*.txt' o '*nombre*'"
+                    }
+                },
+                "required": ["directory", "pattern"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_text",
+            "description": "Busca texto específico dentro de archivos o directorios usando grep",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Ruta absoluta del archivo o directorio donde buscar"
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "El texto o expresión regular a buscar"
+                    }
+                },
+                "required": ["path", "query"]
+            }
+        }
     }
 ]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Base de datos vectorial de Tools (ChromaDB)
+# ─────────────────────────────────────────────────────────────────────────────
+CHROMA_DB_PATH = os.path.join(HOME, ".local", "share", "quickshell", "minerva_tools")
+
+try:
+    chroma_client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
+    tool_collection = chroma_client.get_or_create_collection(name="minerva_tools")
+    
+    # Sincronizar las tools actuales al arrancar
+    _tool_docs = [t["function"]["description"] for t in OLLAMA_TOOLS]
+    _tool_ids = [t["function"]["name"] for t in OLLAMA_TOOLS]
+    
+    tool_collection.upsert(
+        documents=_tool_docs,
+        ids=_tool_ids
+    )
+    CHROMADB_AVAILABLE = True
+except Exception as e:
+    print(f"Error inicializando ChromaDB: {e}", file=sys.stderr)
+    CHROMADB_AVAILABLE = False
+
+def get_relevant_tools(prompt: str, top_k: int = 3) -> list:
+    """Busca las herramientas más relevantes en base al prompt usando ChromaDB."""
+    if not CHROMADB_AVAILABLE or not prompt.strip():
+        return OLLAMA_TOOLS
+        
+    try:
+        results = tool_collection.query(
+            query_texts=[prompt],
+            n_results=min(top_k, len(OLLAMA_TOOLS))
+        )
+        if not results['ids'] or not results['ids'][0]:
+            return OLLAMA_TOOLS
+            
+        relevant_tool_names = results['ids'][0]
+        return [t for t in OLLAMA_TOOLS if t["function"]["name"] in relevant_tool_names]
+    except Exception as e:
+        print(f"Error consultando ChromaDB: {e}", file=sys.stderr)
+        return OLLAMA_TOOLS
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # I/O helpers
@@ -170,6 +955,80 @@ def classify_cmd(cmd: str) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 # Herramientas del sistema
 # ─────────────────────────────────────────────────────────────────────────────
+def tool_web_search(query: str, max_results: int = 5) -> str:
+    """Busca en internet usando DuckDuckGo (sin API key)."""
+    if not WEB_SEARCH_AVAILABLE:
+        return "Error: el módulo 'ddgs' no está instalado en el entorno del plugin."
+    max_results = max(1, min(10, int(max_results)))
+    try:
+        results = []
+        with DDGS() as ddgs:
+            for r in ddgs.text(query, max_results=max_results):
+                results.append(r)
+        if not results:
+            return f"No se encontraron resultados para: {query}"
+        lines = [f"Resultados de búsqueda para: '{query}'\n"]
+        for i, r in enumerate(results, 1):
+            title   = r.get("title",  "Sin título")
+            href    = r.get("href",   "")
+            snippet = r.get("body",   r.get("description", "Sin descripción"))
+            lines.append(f"[{i}] {title}")
+            lines.append(f"    URL: {href}")
+            lines.append(f"    {snippet}")
+            lines.append("")
+        return "\n".join(lines).strip()
+    except Exception as e:
+        return f"Error al realizar la búsqueda web: {e}"
+
+def tool_spotify_music(action: str, query: str = "", uri: str = "",
+                       search_type: str = "track", volume: int = 50) -> str:
+    """Herramienta unificada de Spotify para la IA."""
+    # Verificar configuración
+    if not spotify_mgr.is_configured():
+        return ("Spotify no esta configurado. El usuario debe editar el archivo "
+                f"{SPOTIFY_CREDS_FILE} con su client_id y client_secret "
+                "de https://developer.spotify.com/dashboard")
+
+    # Autenticar si no hay token
+    if not spotify_mgr.is_authenticated():
+        auth_result = spotify_mgr.authenticate()
+        if "exitosa" not in auth_result:
+            return auth_result
+
+    action = action.strip().lower()
+
+    if action == "search":
+        if not query:
+            return "Se necesita un texto de busqueda (parametro 'query')."
+        return spotify_mgr.search(query, search_type)
+
+    elif action == "play":
+        return spotify_mgr.play(uri=uri or None, query=query or None)
+
+    elif action == "pause":
+        return spotify_mgr.pause()
+
+    elif action == "resume":
+        return spotify_mgr.resume()
+
+    elif action == "next":
+        return spotify_mgr.next_track()
+
+    elif action == "previous":
+        return spotify_mgr.previous_track()
+
+    elif action == "volume":
+        return spotify_mgr.set_volume(volume)
+
+    elif action == "current":
+        return spotify_mgr.current_playing()
+
+    elif action == "queue":
+        return spotify_mgr.add_to_queue(uri=uri or None, query=query or None)
+
+    else:
+        return f"Accion desconocida: '{action}'. Acciones validas: search, play, pause, resume, next, previous, volume, current, queue."
+
 def tool_list_dir(path: str) -> str:
     exp = str(pathlib.Path(path).expanduser())
     if not is_safe_path(exp):
@@ -203,25 +1062,101 @@ def tool_read_file(path: str) -> str:
     except Exception as e:
         return f"Error leyendo archivo: {e}"
 
+import shutil
+
+def tool_delete_file(path: str) -> str:
+    exp = str(pathlib.Path(path).expanduser())
+    if not is_safe_path(exp): return f"Acceso denegado: solo {HOME}"
+    try:
+        p = pathlib.Path(exp)
+        if not p.exists(): return f"No existe: {exp}"
+        if p.is_dir():
+            shutil.rmtree(exp)
+        else:
+            p.unlink()
+        return f"Eliminado exitosamente: {exp}"
+    except Exception as e:
+        return f"Error eliminando: {e}"
+
+def tool_create_directory(path: str) -> str:
+    exp = str(pathlib.Path(path).expanduser())
+    if not is_safe_path(exp): return f"Acceso denegado: solo {HOME}"
+    try:
+        pathlib.Path(exp).mkdir(parents=True, exist_ok=True)
+        return f"Directorio creado: {exp}"
+    except Exception as e:
+        return f"Error creando directorio: {e}"
+
+def tool_move_file(source: str, destination: str) -> str:
+    src_exp = str(pathlib.Path(source).expanduser())
+    dst_exp = str(pathlib.Path(destination).expanduser())
+    if not is_safe_path(src_exp) or not is_safe_path(dst_exp):
+        return f"Acceso denegado: origen y destino deben estar en {HOME}"
+    try:
+        if not pathlib.Path(src_exp).exists(): return f"Origen no existe: {src_exp}"
+        shutil.move(src_exp, dst_exp)
+        return f"Movido exitosamente a: {dst_exp}"
+    except Exception as e:
+        return f"Error moviendo: {e}"
+
+def tool_find_files(directory: str, pattern: str) -> str:
+    exp = str(pathlib.Path(directory).expanduser())
+    if not is_safe_path(exp): return f"Acceso denegado: solo {HOME}"
+    try:
+        r = subprocess.run(
+            ["find", exp, "-name", pattern],
+            capture_output=True, text=True, timeout=10
+        )
+        out = r.stdout if r.returncode == 0 else r.stderr
+        return out[:MAX_DIR] if out else "No se encontraron resultados"
+    except Exception as e:
+        return f"Error buscando archivos: {e}"
+
+def tool_search_text(path: str, query: str) -> str:
+    exp = str(pathlib.Path(path).expanduser())
+    if not is_safe_path(exp): return f"Acceso denegado: solo {HOME}"
+    try:
+        r = subprocess.run(
+            ["grep", "-rn", query, exp],
+            capture_output=True, text=True, timeout=10
+        )
+        out = r.stdout if r.returncode == 0 else r.stderr
+        return out[:MAX_FILE] if out else "No se encontraron coincidencias"
+    except Exception as e:
+        return f"Error buscando texto: {e}"
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Bucle de chat con tool calls nativos
 # ─────────────────────────────────────────────────────────────────────────────
-def do_chat(history: list, max_iters: int = 6):
+def do_chat(history: list, max_iters: int = 6, model: str = MODEL, temperature: float = 0.7, num_ctx: int = 8192, thinking: bool = False):
     """
     Ejecuta un turno de chat, manejando tool calls de manera iterativa.
     Emite los tokens de texto al QML en tiempo real.
     """
+    if VOICE_AVAILABLE:
+        voice_mgr.tts_stop_event.clear()
+        
+    user_prompt = ""
+    for msg in reversed(history):
+        if msg.get("role") == "user":
+            user_prompt = msg.get("content", "")
+            break
+            
+    dynamic_tools = get_relevant_tools(user_prompt, top_k=3) if user_prompt else OLLAMA_TOOLS
+        
     for iteration in range(max_iters):
         full_response = ""
         current_tool_calls = []
+        buffer_frase = ""
         
         try:
             stream = ollama.chat(
-                model=MODEL,
+                model=model,
                 messages=history,
                 stream=True,
-                tools=OLLAMA_TOOLS,
-                think=False  # Desactiva "thinking" tags nativamente en ollama-python >= 0.6
+                tools=dynamic_tools,
+                options={"temperature": temperature, "num_ctx": num_ctx},
+                think=thinking  # Activa o desactiva "thinking" nativamente en ollama-python >= 0.6
             )
             
             for chunk in stream:
@@ -229,7 +1164,15 @@ def do_chat(history: list, max_iters: int = 6):
                 if msg.content:
                     token = msg.content
                     full_response += token
+                    buffer_frase += token
                     emit({"type": "token", "content": token})
+                    
+                    if VOICE_AVAILABLE and not voice_mgr.tts_stop_event.is_set():
+                        if re.search(r'[.!?\n:]', token) and len(buffer_frase.strip()) > 5:
+                            clean_frase = buffer_frase.replace("*", "").replace("#", "").strip()
+                            if clean_frase:
+                                voice_mgr.tts_queue.put(clean_frase)
+                            buffer_frase = ""
                 
                 if msg.tool_calls:
                     current_tool_calls = msg.tool_calls
@@ -240,6 +1183,10 @@ def do_chat(history: list, max_iters: int = 6):
 
         # Si no hubo llamadas a herramientas, la IA terminó su respuesta final
         if not current_tool_calls:
+            if VOICE_AVAILABLE and len(buffer_frase.strip()) > 0 and not voice_mgr.tts_stop_event.is_set():
+                clean_frase = buffer_frase.replace("*", "").replace("#", "").strip()
+                if clean_frase:
+                    voice_mgr.tts_queue.put(clean_frase)
             emit({"type": "done", "full_response": full_response})
             return
 
@@ -276,6 +1223,49 @@ def do_chat(history: list, max_iters: int = 6):
                 result = tool_read_file(args.get("path", ""))
                 emit({"type": "tool_result", "tool": tool_name, "result": result})
                 history.append({"role": "tool", "name": tool_name, "content": result})
+
+            elif tool_name == "delete_file":
+                result = tool_delete_file(args.get("path", ""))
+                emit({"type": "tool_result", "tool": tool_name, "result": result})
+                history.append({"role": "tool", "name": tool_name, "content": result})
+
+            elif tool_name == "create_directory":
+                result = tool_create_directory(args.get("path", ""))
+                emit({"type": "tool_result", "tool": tool_name, "result": result})
+                history.append({"role": "tool", "name": tool_name, "content": result})
+
+            elif tool_name == "move_file":
+                result = tool_move_file(args.get("source", ""), args.get("destination", ""))
+                emit({"type": "tool_result", "tool": tool_name, "result": result})
+                history.append({"role": "tool", "name": tool_name, "content": result})
+
+            elif tool_name == "find_files":
+                result = tool_find_files(args.get("directory", ""), args.get("pattern", ""))
+                emit({"type": "tool_result", "tool": tool_name, "result": result})
+                history.append({"role": "tool", "name": tool_name, "content": result})
+
+            elif tool_name == "search_text":
+                result = tool_search_text(args.get("path", ""), args.get("query", ""))
+                emit({"type": "tool_result", "tool": tool_name, "result": result})
+                history.append({"role": "tool", "name": tool_name, "content": result})
+
+            elif tool_name == "web_search":
+                query       = args.get("query", "").strip()
+                max_results = args.get("max_results", 5)
+                result = tool_web_search(query, max_results)
+                emit({"type": "tool_result", "tool": tool_name, "result": result})
+                history.append({"role": "tool", "name": tool_name, "content": result})
+
+            elif tool_name == "spotify_music":
+                result = tool_spotify_music(
+                    action=args.get("action", ""),
+                    query=args.get("query", ""),
+                    uri=args.get("uri", ""),
+                    search_type=args.get("search_type", "track"),
+                    volume=args.get("volume", 50)
+                )
+                emit({"type": "tool_result", "tool": tool_name, "result": result})
+                history.append({"role": "tool", "name": tool_name, "content": result})
                 
             elif tool_name == "run_command":
                 cmd = args.get("command", "").strip()
@@ -309,6 +1299,7 @@ def do_chat(history: list, max_iters: int = 6):
 # ─────────────────────────────────────────────────────────────────────────────
 msg_queue = queue.Queue()
 current_history = []
+current_settings = {}
 
 class BackendHTTPHandler(BaseHTTPRequestHandler):
     def do_POST(self):
@@ -346,18 +1337,38 @@ def main():
 
         msg_type = msg.get("type")
         global current_history
+        global current_settings
 
         # ── Chat ──────────────────────────────────────────────────────────
         if msg_type == "chat":
             text = msg.get("message", "").strip()
             hist = msg.get("history", [])
+            settings = msg.get("settings", {})
             if not text:
                 continue
 
-            current_history = [{"role": "system", "content": SYSTEM_PROMPT}]
+            current_settings = settings
+
+            import datetime
+            fecha_actual = datetime.datetime.now().strftime("%A, %d de %B de %Y, %H:%M")
+            system_prompt_with_date = SYSTEM_PROMPT.replace("{fecha_actual}", fecha_actual)
+
+            current_history = [{"role": "system", "content": system_prompt_with_date}]
             current_history.extend(hist)
             current_history.append({"role": "user", "content": text})
-            do_chat(current_history)
+            
+            req_model = current_settings.get("model", MODEL)
+            try:
+                req_temp = float(current_settings.get("temperature", "0.7"))
+            except ValueError:
+                req_temp = 0.7
+            try:
+                req_ctx = int(current_settings.get("num_ctx", "8192"))
+            except ValueError:
+                req_ctx = 8192
+            req_think = bool(current_settings.get("thinking", False))
+            
+            do_chat(current_history, model=req_model, temperature=req_temp, num_ctx=req_ctx, thinking=req_think)
 
         # ── Confirmación de comando normal ────────────────────────────────
         elif msg_type == "run_confirmed":
@@ -389,7 +1400,17 @@ def main():
             if current_history and current_history[-1].get("tool_calls"):
                 # Asumimos que es para la última tool_call
                 current_history.append({"role": "tool", "name": "run_command", "content": out[:4096] or "(sin salida)"})
-                do_chat(current_history)
+                req_model = current_settings.get("model", MODEL)
+                try:
+                    req_temp = float(current_settings.get("temperature", "0.7"))
+                except ValueError:
+                    req_temp = 0.7
+                try:
+                    req_ctx = int(current_settings.get("num_ctx", "8192"))
+                except ValueError:
+                    req_ctx = 8192
+                req_think = bool(current_settings.get("thinking", False))
+                do_chat(current_history, model=req_model, temperature=req_temp, num_ctx=req_ctx, thinking=req_think)
 
         # ── Comando sudo via pkexec ───────────────────────────────────────
         elif msg_type == "run_sudo":
@@ -419,14 +1440,79 @@ def main():
             
             if current_history and current_history[-1].get("tool_calls"):
                 current_history.append({"role": "tool", "name": "run_command", "content": out[:4096] or "(sin salida)"})
-                do_chat(current_history)
+                req_model = current_settings.get("model", MODEL)
+                try:
+                    req_temp = float(current_settings.get("temperature", "0.7"))
+                except ValueError:
+                    req_temp = 0.7
+                try:
+                    req_ctx = int(current_settings.get("num_ctx", "8192"))
+                except ValueError:
+                    req_ctx = 8192
+                req_think = bool(current_settings.get("thinking", False))
+                do_chat(current_history, model=req_model, temperature=req_temp, num_ctx=req_ctx, thinking=req_think)
 
-        # ── Ping / Cancel ─────────────────────────────────────────────────
+        # ── Ping / Cancel / Voice ─────────────────────────────────────────
         elif msg_type == "ping":
             emit({"type": "ready", "model": MODEL, "home": HOME})
             
         elif msg_type == "cancel":
-            pass
+            if VOICE_AVAILABLE:
+                voice_mgr.stop_tts()
+                
+        elif msg_type == "stop_tts":
+            if VOICE_AVAILABLE:
+                voice_mgr.stop_tts()
+                
+        elif msg_type == "toggle_voice":
+            if not VOICE_AVAILABLE:
+                emit_error("Dependencias de voz no instaladas")
+                continue
+                
+            if not voice_mgr.is_recording:
+                # Iniciar grabación
+                res = voice_mgr.toggle_recording()
+                if res == "started":
+                    emit({"type": "voice_recording_started"})
+                else:
+                    emit_error("No se pudo iniciar la grabación")
+            else:
+                # Detener grabación — la transcripción va en un hilo separado
+                voice_mgr.is_recording = False
+                if voice_mgr.stream:
+                    voice_mgr.stream.stop()
+                    voice_mgr.stream.close()
+                
+                emit({"type": "voice_recording_stopped"})
+                
+                if not voice_mgr.audio_data:
+                    continue
+                
+                audio_np = np.concatenate(voice_mgr.audio_data, axis=0)
+                emit({"type": "voice_transcribing"})
+                
+                def _transcribe_async(audio_data):
+                    try:
+                        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+                            sf.write(tmp.name, audio_data, 16000)
+                            tmp_name = tmp.name
+                        
+                        if not voice_mgr.whisper_model:
+                            voice_mgr.whisper_model = Model("base", language="es", print_realtime=False, print_progress=False)
+                        
+                        segments = voice_mgr.whisper_model.transcribe(tmp_name)
+                        text = " ".join([s.text for s in segments]).strip()
+                        os.remove(tmp_name)
+                        
+                        # Filtrar artefactos de whisper
+                        if not text or "[BLANK_AUDIO]" in text or len(text) < 2:
+                            return
+                        
+                        emit({"type": "voice_recognized", "text": text})
+                    except Exception as e:
+                        emit_error(f"Error al transcribir: {e}")
+                
+                threading.Thread(target=_transcribe_async, args=(audio_np,), daemon=True).start()
 
 if __name__ == "__main__":
     main()

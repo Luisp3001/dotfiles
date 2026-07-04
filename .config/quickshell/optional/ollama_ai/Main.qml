@@ -18,11 +18,45 @@ Item {
     readonly property int expandedWidth:  520
     readonly property int expandedHeight: 560
 
+    // ── Configuración de IA ───────────────────────────────────────────────
+    property string aiModel: "qwen3.5:9b"
+    property string aiTemperature: "0.7"
+    property string aiNumCtx: "8192"
+    property bool   aiThinking: false
+
+    property var settingsConfig: [
+        { id: "aiModel", name: "Modelo de Ollama", type: "string", defaultValue: "qwen3.5:9b" },
+        { id: "aiTemperature", name: "Temperatura (0.0 - 1.0)", type: "string", defaultValue: "0.7" },
+        { id: "aiNumCtx", name: "Contexto (num_ctx)", type: "string", defaultValue: "8192" },
+        { id: "aiThinking", name: "Activar razonamiento (Thinking)", type: "bool", defaultValue: false }
+    ]
+
+    Component.onCompleted: {
+        if (parent && parent.getSetting) {
+            aiModel = parent.getSetting(pluginId, "aiModel", "qwen3.5:9b")
+            aiTemperature = parent.getSetting(pluginId, "aiTemperature", "0.7")
+            aiNumCtx = parent.getSetting(pluginId, "aiNumCtx", "8192")
+            aiThinking = parent.getSetting(pluginId, "aiThinking", false)
+        }
+    }
+
+    Connections {
+        target: widget.parent && widget.parent.settingChanged ? widget.parent : null
+        function onSettingChanged(id, key, value) {
+            if (id === widget.pluginId) {
+                if (key === "aiModel") widget.aiModel = value
+                else if (key === "aiTemperature") widget.aiTemperature = value
+                else if (key === "aiNumCtx") widget.aiNumCtx = value
+                else if (key === "aiThinking") widget.aiThinking = value
+            }
+        }
+    }
+
     // ── Estado del backend ────────────────────────────────────────────────
     property bool   backendReady:  false
     property bool   isThinking:    false
     property string lastAISnippet: "Minerva"
-    readonly property string modelName: "Gemma4:e4b"
+    property string modelName: aiModel
 
     // ── Estado de la UI persistente ───────────────────────────────────────
     property var    conversationHistory: []
@@ -33,6 +67,8 @@ Item {
     property bool   pendingIsSudo: false
     property string pendingReason: ""
     property bool   showConfirm: false
+    property bool   isRecording: false
+    property bool   isTranscribing: false
 
     ListModel { id: globalMsgModel }
     property alias msgModel: globalMsgModel
@@ -48,7 +84,7 @@ Item {
     // ── Proceso backend persistente ───────────────────────────────────────
     Process {
         id: backendProc
-        command: [widget.pluginDir + "/venv/bin/python3", "-u", widget.pluginDir + "/backend.py"]
+        command: [widget.pluginDir + "/.venv/bin/python3", "-u", widget.pluginDir + "/backend.py"]
         running: true
 
         stdout: SplitParser {
@@ -112,19 +148,67 @@ Item {
             case "run_command":
                 isThinking = false
                 break
+            case "voice_recording_started":
+                isRecording = true
+                break
+            case "voice_recording_stopped":
+                isRecording = false
+                break
+            case "voice_transcribing":
+                isTranscribing = true
+                break
+            case "voice_recognized":
+                isRecording = false
+                isTranscribing = false
+                if (msg.text) {
+                    // Simular que el usuario escribió el texto
+                    currentUserMsg = msg.text
+                    globalMsgModel.append({
+                        role: "user", content: msg.text, command: "", cmdStatus: "",
+                        needsConfirm: false, needsSudo: false, isSystem: false
+                    })
+                    sendChat(msg.text, conversationHistory.slice())
+                }
+                break
         }
         // Reenviar a ChatWidget
         widget.backendMessage(msg)
     }
 
     function sendChat(message, history) {
+        if (isRecording) { toggleVoice() }
         isThinking = true
-        sendToBackend({ type: "chat", message: message, history: history })
+        sendToBackend({ 
+            type: "chat", 
+            message: message, 
+            history: history,
+            settings: {
+                model: widget.aiModel,
+                temperature: widget.aiTemperature,
+                num_ctx: widget.aiNumCtx,
+                thinking: widget.aiThinking
+            }
+        })
     }
 
     function confirmRun(cmd) { sendToBackend({ type: "run_confirmed", command: cmd }) }
     function cancelRun()     { sendToBackend({ type: "cancel" }) }
     function sudoRun(cmd)    { sendToBackend({ type: "run_sudo",      command: cmd }) }
+    function toggleVoice()   { sendToBackend({ type: "toggle_voice" }) }
+    function stopTTS()       { sendToBackend({ type: "stop_tts" }) }
+
+    // ── IPC Handler (qs ipc call minerva) ─────────────────────────────────
+    IpcHandler {
+        target: "minerva"
+        function toggle_voice(): string {
+            widget.toggleVoice()
+            return widget.isRecording ? "Grabación de voz detenida" : "Iniciando grabación de voz..."
+        }
+        function stop_tts(): string {
+            widget.stopTTS()
+            return "Voz detenida"
+        }
+    }
 
     // ── barIcon ───────────────────────────────────────────────────────────
     // Icono en la barra derecha: pulsa cuando la IA está pensando,

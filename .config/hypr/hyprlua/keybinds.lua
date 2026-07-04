@@ -7,6 +7,7 @@ local wallpaper = "qs ipc call shell toggleWallpaper"
 local screenshot = "qs ipc call shell launchScreenshot"
 local overview = "qs ipc call shell toggleOverview"
 local scripts = "~/.config/hypr/scripts_hypr/launcher.sh --script"
+local minerva = "qs ipc call minerva toggle_voice"
 local screenrec = '/home/luisp/.config/quickshell/optional/screenrec/wl_screenrec_ctl.sh open-selector -- --audio --audio-device "alsa_output.pci-0000_00_1f.3-platform-skl_hda_dsp_generic.HiFi__Headphones__sink.monitor"'
 
 hl.config({
@@ -20,6 +21,7 @@ hl.config({
 hl.bind(mainMod .. " + Q", hl.dsp.exec_cmd(terminal))
 hl.bind(mainMod .. " + C", hl.dsp.window.close())
 hl.bind(mainMod .. " + P", hl.dsp.exec_cmd(wallpaper))
+hl.bind(mainMod .. " + period", hl.dsp.exec_cmd(minerva))
 hl.bind(mainMod .. " + M", hl.dsp.exit())
 hl.bind(mainMod .. " + E", hl.dsp.exec_cmd(fileManager))
 hl.bind(mainMod .. " + B", hl.dsp.exec_cmd(browser))

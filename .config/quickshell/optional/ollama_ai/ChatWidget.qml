@@ -76,6 +76,7 @@ Item {
         if (t === "list_dir")    return "󰏗  Listando directorio…"
         if (t === "read_file")   return "󰈙  Leyendo archivo…"
         if (t === "run_command") return "󰆍  Preparando comando…"
+        if (t === "web_search")  return "󰖟  Buscando en internet…"
         return "󰏗  Usando herramienta…"
     }
 
@@ -638,7 +639,7 @@ Item {
                     anchors.horizontalCenter: parent.horizontalCenter
                 }
                 Text {
-                    text: "Tengo acceso a tu directorio home"
+                    text: "Tengo acceso a tu directorio home y búsqueda web"
                     font.family: Theme.fontSans
                     font.pixelSize: 11
                     color: Theme.textMuted
@@ -668,7 +669,7 @@ Item {
                 // Campo de texto
                 Rectangle {
                     height: parent.height
-                    width:  parent.width - 50
+                    width:  parent.width - 100 // send + mic + spacings
                     radius: 12
                     color:  Qt.rgba(1, 1, 1, 0.07)
                     border.width: inputField.activeFocus ? 1 : 0
@@ -682,16 +683,20 @@ Item {
                         font.pixelSize: 13
                         color: Theme.textPrimary
                         clip: true
-                        readOnly: root.aiWidget && root.aiWidget.isThinking
+                        readOnly: root.aiWidget && (root.aiWidget.isThinking || root.aiWidget.isRecording || root.aiWidget.isTranscribing)
 
                         // Placeholder manual
                         Text {
                             visible: !inputField.text && !inputField.activeFocus
-                            text: root.aiWidget && root.aiWidget.isThinking
+                            text: root.aiWidget && root.aiWidget.isRecording
+                                ? "🎙 Escuchando… presiona de nuevo para enviar"
+                                : root.aiWidget && root.aiWidget.isTranscribing
+                                ? "⏳ Transcribiendo…"
+                                : root.aiWidget && root.aiWidget.isThinking
                                 ? "Esperando respuesta…"
                                 : "Escribe un mensaje…  Enter para enviar"
                             font: inputField.font
-                            color: Theme.textMuted
+                            color: root.aiWidget && root.aiWidget.isRecording ? Theme.danger : Theme.textMuted
                             anchors { left: parent.left; verticalCenter: parent.verticalCenter }
                         }
 
@@ -699,6 +704,41 @@ Item {
                             if (!(e.modifiers & Qt.ShiftModifier))
                                 root.sendMessage()
                         }
+                    }
+                }
+
+                // Botón micrófono
+                Rectangle {
+                    width:  42
+                    height: parent.height
+                    radius: 12
+                    color: root.aiWidget && root.aiWidget.isRecording
+                        ? Qt.rgba(Theme.danger.r, Theme.danger.g, Theme.danger.b, 0.3)
+                        : (micMa.containsMouse ? Qt.rgba(1, 1, 1, 0.12) : Qt.rgba(1, 1, 1, 0.07))
+                    Behavior on color { ColorAnimation { duration: 150 } }
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: "󰍬" // NerdFont mic
+                        font.family: Theme.fontMono
+                        font.pixelSize: 20
+                        color: root.aiWidget && root.aiWidget.isRecording ? Theme.danger : Theme.textMuted
+                        
+                        SequentialAnimation on opacity {
+                            running: root.aiWidget && root.aiWidget.isRecording
+                            loops: Animation.Infinite
+                            NumberAnimation { to: 0.3; duration: 600 }
+                            NumberAnimation { to: 1.0; duration: 600 }
+                            onStopped: opacity = 1.0
+                        }
+                    }
+
+                    MouseArea {
+                        id: micMa
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: if (root.aiWidget) root.aiWidget.toggleVoice()
                     }
                 }
 
@@ -710,7 +750,7 @@ Item {
                     color: sendMa.containsMouse && !(root.aiWidget && root.aiWidget.isThinking)
                         ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.25)
                         : Qt.rgba(1, 1, 1, 0.07)
-                    opacity: (root.aiWidget && root.aiWidget.isThinking) ? 0.4 : 1.0
+                    opacity: (root.aiWidget && (root.aiWidget.isThinking || root.aiWidget.isRecording)) ? 0.4 : 1.0
                     Behavior on color   { ColorAnimation  { duration: 150 } }
                     Behavior on opacity { NumberAnimation { duration: 200 } }
 
@@ -734,7 +774,7 @@ Item {
                         anchors.fill: parent
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
-                        enabled: !(root.aiWidget && root.aiWidget.isThinking)
+                        enabled: !(root.aiWidget && (root.aiWidget.isThinking || root.aiWidget.isRecording))
                         onClicked: root.sendMessage()
                     }
                 }
