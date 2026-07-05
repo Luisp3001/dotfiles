@@ -23,7 +23,13 @@ Salida (stdout, una línea JSON por evento):
   {"type":"error",          "message":"..."}
 """
 
+import os
 import sys
+
+# Compatibilidad para GPUs AMD RX 6000 (RDNA 2) en PyTorch ROCm
+if "HSA_OVERRIDE_GFX_VERSION" not in os.environ:
+    os.environ["HSA_OVERRIDE_GFX_VERSION"] = "10.3.0"
+
 import json
 import os
 import re
@@ -78,9 +84,9 @@ SPOTIFY_SCOPES      = "user-read-playback-state user-modify-playback-state user-
 # ─────────────────────────────────────────────────────────────────────────────
 # VOZ: STT y TTS
 # ─────────────────────────────────────────────────────────────────────────────
-VOICE_DIR = os.path.join(HOME, ".local", "share", "quickshell", "minerva_voice")
-PIPER_MODEL_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/main/es/es_ES/carlota/x_low/es_ES-carlota-x_low.onnx"
-PIPER_JSON_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/main/es/es_ES/carlota/x_low/es_ES-carlota-x_low.onnx.json"
+VOICE_DIR = os.path.join(HOME, ".config", "quickshell", "optional", "ollama_ai", "voice")
+REF_WAV = os.path.join(VOICE_DIR, "referencia.wav")
+REF_TXT = os.path.join(VOICE_DIR, "referencia.txt")
 
 class VoiceManager:
     def __init__(self):
@@ -89,36 +95,39 @@ class VoiceManager:
         self.samplerate = 16000
         self.stream = None
         self.whisper_model = None
-        self.piper_voice = None
+        
+        self.kokoro_pipeline = None
+
         self.tts_queue = queue.Queue()
+        self.play_queue = queue.Queue()
         self.tts_thread = None
+        self.play_thread = None
         self.tts_stop_event = threading.Event()
-        self.model_path = os.path.join(VOICE_DIR, PIPER_MODEL_URL.split("/")[-1])
         
         if VOICE_AVAILABLE:
             os.makedirs(VOICE_DIR, exist_ok=True)
-            # Iniciar TTS worker en hilo separado (descarga modelo si es necesario)
             self.tts_thread = threading.Thread(target=self._tts_worker, daemon=True)
+            self.play_thread = threading.Thread(target=self._play_worker, daemon=True)
             self.tts_thread.start()
+            self.play_thread.start()
             
-    def _ensure_piper_model(self):
-        if not os.path.exists(self.model_path):
-            try:
-                import urllib.request
-                print("Descargando modelo de voz...", file=sys.stderr)
-                urllib.request.urlretrieve(PIPER_MODEL_URL, self.model_path)
-                urllib.request.urlretrieve(PIPER_JSON_URL, self.model_path + ".json")
-                print("Modelo descargado con éxito.", file=sys.stderr)
-            except Exception as e:
-                print(f"Error descargando el modelo: {e}", file=sys.stderr)
+    def _ensure_kokoro_model(self):
+        if self.kokoro_pipeline is not None:
+            return
+        try:
+            print("Cargando modelo Kokoro TTS...", file=sys.stderr)
+            import os
+            os.environ["HSA_OVERRIDE_GFX_VERSION"] = "10.3.0"
+            from kokoro import KPipeline
+            self.kokoro_pipeline = KPipeline(lang_code='e')
+            print("Modelo Kokoro TTS cargado exitosamente.", file=sys.stderr)
+        except Exception as e:
+            print(f"Error cargando Kokoro TTS: {e}", file=sys.stderr)
         
     def _tts_worker(self):
-        # Descargar modelo de voz en este hilo para no bloquear el arranque
-        self._ensure_piper_model()
-        try:
-            self.piper_voice = PiperVoice.load(self.model_path)
-        except Exception as e:
-            print(f"Error cargando modelo TTS en worker: {e}", file=sys.stderr)
+        self._ensure_kokoro_model()
+        if not self.kokoro_pipeline:
+            print("Kokoro TTS no pudo ser inicializado", file=sys.stderr)
             return
             
         while True:
@@ -129,32 +138,39 @@ class VoiceManager:
                 continue
                 
             try:
-                import wave
-                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-                    tmp_name = tmp.name
-                
-                with wave.open(tmp_name, "wb") as wav_file:
-                    self.piper_voice.synthesize_wav(text, wav_file)
-                
                 if not self.tts_stop_event.is_set():
-                    data, fs = sf.read(tmp_name, dtype='float32')
-                    sd.play(data, fs)
-                    sd.wait()
-                os.remove(tmp_name)
+                    generator = self.kokoro_pipeline(text, voice='ef_dora' , speed=1.0)
+                    for i, (gs, ps, audio) in enumerate(generator):
+                        if self.tts_stop_event.is_set():
+                            break
+                        self.play_queue.put((audio, 24000))
+                        
             except Exception as e:
                 import traceback
-                print(f"ERROR EN TTS WORKER: {e}", file=sys.stderr)
+                print(f"ERROR EN TTS WORKER (Kokoro): {e}", file=sys.stderr)
                 traceback.print_exc(file=sys.stderr)
-                try: os.remove(tmp_name)
-                except: pass
             self.tts_queue.task_done()
+
+    def _play_worker(self):
+        while True:
+            item = self.play_queue.get()
+            if item is None: break
+            audio, sample_rate = item
+            if not self.tts_stop_event.is_set():
+                sd.play(audio, sample_rate)
+                sd.wait()
+            self.play_queue.task_done()
             
     def stop_tts(self):
         if not VOICE_AVAILABLE: return
         self.tts_stop_event.set()
         sd.stop()
+        # Vaciar colas
         while not self.tts_queue.empty():
             try: self.tts_queue.get_nowait()
+            except: pass
+        while not self.play_queue.empty():
+            try: self.play_queue.get_nowait()
             except: pass
             
     def audio_callback(self, indata, frames, time, status):
@@ -1143,6 +1159,158 @@ def tool_search_text(path: str, query: str) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 # Bucle de chat con tool calls nativos
 # ─────────────────────────────────────────────────────────────────────────────
+def do_chat_gemini(history: list, max_iters: int = 6, model: str = "gemini-2.5-flash", api_key: str = "", temperature: float = 0.7):
+    """Ejecuta un turno de chat usando la API compatible con OpenAI de Gemini."""
+    if not api_key:
+        emit_error("API Key de Gemini no configurada en los ajustes del widget.")
+        return
+        
+    if VOICE_AVAILABLE:
+        voice_mgr.tts_stop_event.clear()
+        
+    user_prompt = ""
+    for msg in reversed(history):
+        if msg.get("role") == "user":
+            user_prompt = msg.get("content", "")
+            break
+            
+    dynamic_tools = get_relevant_tools(user_prompt, top_k=3) if user_prompt else OLLAMA_TOOLS
+        
+    for iteration in range(max_iters):
+        full_response = ""
+        current_tool_calls = []
+        buffer_frase = ""
+        
+        clean_history = []
+        valid_keys = {"role", "content", "tool_calls", "tool_call_id", "name"}
+        for msg in history:
+            clean_msg = {k: v for k, v in msg.items() if k in valid_keys}
+            clean_history.append(clean_msg)
+
+        req_data = {
+            "model": model,
+            "messages": clean_history,
+            "tools": dynamic_tools,
+            "stream": True,
+            "temperature": temperature
+        }
+        
+        import urllib.request, urllib.error
+        req = urllib.request.Request(
+            "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+            data=json.dumps(req_data).encode("utf-8"),
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+        )
+        
+        try:
+            with urllib.request.urlopen(req) as resp:
+                for line in resp:
+                    line = line.decode('utf-8').strip()
+                    if not line: continue
+                    if line == "data: [DONE]": break
+                    if line.startswith("data: "):
+                        try:
+                            chunk = json.loads(line[6:])
+                        except:
+                            continue
+                        delta = chunk.get("choices", [{}])[0].get("delta", {})
+                        
+                        if "content" in delta and delta["content"]:
+                            token = delta["content"]
+                            full_response += token
+                            buffer_frase += token
+                            emit({"type": "token", "content": token})
+                            
+                            if VOICE_AVAILABLE and not voice_mgr.tts_stop_event.is_set():
+                                if re.search(r'[.!?\n:]', token) and len(buffer_frase.strip()) > 5:
+                                    clean_frase = buffer_frase.replace("*", "").replace("#", "").strip()
+                                    if clean_frase:
+                                        voice_mgr.tts_queue.put(clean_frase)
+                                    buffer_frase = ""
+                                    
+                        if "tool_calls" in delta:
+                            for tc in delta["tool_calls"]:
+                                idx = tc.get("index", 0)
+                                while len(current_tool_calls) <= idx:
+                                    current_tool_calls.append({"id": "", "type": "function", "function": {"name": "", "arguments": ""}})
+                                if "id" in tc:
+                                    current_tool_calls[idx]["id"] = tc["id"]
+                                if "function" in tc:
+                                    if "name" in tc["function"]:
+                                        current_tool_calls[idx]["function"]["name"] += tc["function"]["name"]
+                                    if "arguments" in tc["function"]:
+                                        current_tool_calls[idx]["function"]["arguments"] += tc["function"]["arguments"]
+        except urllib.error.HTTPError as e:
+            err = e.read().decode('utf-8')
+            emit_error(f"Error de Gemini API: {e.code} - {err}")
+            return
+        except Exception as e:
+            emit_error(f"Error de conexión con Gemini: {e}")
+            return
+
+        if not current_tool_calls:
+            if VOICE_AVAILABLE and len(buffer_frase.strip()) > 0 and not voice_mgr.tts_stop_event.is_set():
+                clean_frase = buffer_frase.replace("*", "").replace("#", "").strip()
+                if clean_frase:
+                    voice_mgr.tts_queue.put(clean_frase)
+            emit({"type": "done", "full_response": full_response})
+            return
+
+        history.append({"role": "assistant", "content": full_response, "tool_calls": current_tool_calls})
+        
+        global current_history
+        current_history = history
+        
+        for tc in current_tool_calls:
+            tool_name = tc["function"]["name"]
+            try:
+                args = json.loads(tc["function"]["arguments"])
+            except:
+                args = {}
+                
+            emit({"type": "tool_start", "tool": tool_name})
+            
+            if tool_name == "list_dir":
+                result = tool_list_dir(args.get("path", HOME))
+            elif tool_name == "read_file":
+                result = tool_read_file(args.get("path", ""))
+            elif tool_name == "delete_file":
+                result = tool_delete_file(args.get("path", ""))
+            elif tool_name == "create_directory":
+                result = tool_create_directory(args.get("path", ""))
+            elif tool_name == "move_file":
+                result = tool_move_file(args.get("source", ""), args.get("destination", ""))
+            elif tool_name == "find_files":
+                result = tool_find_files(args.get("directory", ""), args.get("pattern", ""))
+            elif tool_name == "search_text":
+                result = tool_search_text(args.get("path", ""), args.get("query", ""))
+            elif tool_name == "web_search":
+                result = tool_web_search(args.get("query", ""), args.get("max_results", 5))
+            elif tool_name == "spotify_music":
+                result = tool_spotify_music(
+                    action=args.get("action", ""), query=args.get("query", ""),
+                    uri=args.get("uri", ""), search_type=args.get("search_type", "track"),
+                    volume=args.get("volume", 50)
+                )
+            elif tool_name == "run_command":
+                cmd = args.get("command", "").strip()
+                cls = classify_cmd(cmd)
+                if cls == "sudo":
+                    clean = re.sub(r"^\s*sudo\s+", "", cmd)
+                    emit({"type": "sudo_required", "command": clean})
+                elif cls == "destructive":
+                    emit({"type": "confirm_required", "command": cmd, "reason": "Este comando puede eliminar o modificar datos de forma irreversible"})
+                else:
+                    emit({"type": "run_command", "command": cmd})
+                return
+            else:
+                result = "Herramienta desconocida"
+                
+            emit({"type": "tool_result", "tool": tool_name, "result": result})
+            history.append({"role": "tool", "tool_call_id": tc.get("id"), "name": tool_name, "content": result})
+
+    emit_error("Demasiadas iteraciones de herramientas (límite: 6)")
+
 def do_chat(history: list, max_iters: int = 6, model: str = MODEL, temperature: float = 0.7, num_ctx: int = 8192, thinking: bool = False):
     """
     Ejecuta un turno de chat, manejando tool calls de manera iterativa.
@@ -1378,18 +1546,28 @@ def main():
             current_history.extend(hist)
             current_history.append({"role": "user", "content": text})
             
-            req_model = current_settings.get("model", MODEL)
-            try:
-                req_temp = float(current_settings.get("temperature", "0.7"))
-            except ValueError:
-                req_temp = 0.7
-            try:
-                req_ctx = int(current_settings.get("num_ctx", "8192"))
-            except ValueError:
-                req_ctx = 8192
-            req_think = bool(current_settings.get("thinking", False))
+            provider = current_settings.get("provider", "Ollama")
             
-            do_chat(current_history, model=req_model, temperature=req_temp, num_ctx=req_ctx, thinking=req_think)
+            if provider == "Gemini":
+                req_model = current_settings.get("gemini_model", "gemini-2.5-flash")
+                req_api_key = current_settings.get("gemini_api_key", "")
+                try:
+                    req_temp = float(current_settings.get("temperature", "0.7"))
+                except ValueError:
+                    req_temp = 0.7
+                do_chat_gemini(current_history, model=req_model, api_key=req_api_key, temperature=req_temp)
+            else:
+                req_model = current_settings.get("model", MODEL)
+                try:
+                    req_temp = float(current_settings.get("temperature", "0.7"))
+                except ValueError:
+                    req_temp = 0.7
+                try:
+                    req_ctx = int(current_settings.get("num_ctx", "8192"))
+                except ValueError:
+                    req_ctx = 8192
+                req_think = bool(current_settings.get("thinking", False))
+                do_chat(current_history, model=req_model, temperature=req_temp, num_ctx=req_ctx, thinking=req_think)
 
         # ── Confirmación de comando normal ────────────────────────────────
         elif msg_type == "run_confirmed":
@@ -1420,18 +1598,29 @@ def main():
             # Retomar conversación agregando la respuesta de la tool
             if current_history and current_history[-1].get("tool_calls"):
                 # Asumimos que es para la última tool_call
-                current_history.append({"role": "tool", "name": "run_command", "content": out[:4096] or "(sin salida)"})
-                req_model = current_settings.get("model", MODEL)
-                try:
-                    req_temp = float(current_settings.get("temperature", "0.7"))
-                except ValueError:
-                    req_temp = 0.7
-                try:
-                    req_ctx = int(current_settings.get("num_ctx", "8192"))
-                except ValueError:
-                    req_ctx = 8192
-                req_think = bool(current_settings.get("thinking", False))
-                do_chat(current_history, model=req_model, temperature=req_temp, num_ctx=req_ctx, thinking=req_think)
+                t_id = current_history[-1]["tool_calls"][-1].get("id", "")
+                current_history.append({"role": "tool", "tool_call_id": t_id, "name": "run_command", "content": out[:4096] or "(sin salida)"})
+                provider = current_settings.get("provider", "Ollama")
+                if provider == "Gemini":
+                    req_model = current_settings.get("gemini_model", "gemini-2.5-flash")
+                    req_api_key = current_settings.get("gemini_api_key", "")
+                    try:
+                        req_temp = float(current_settings.get("temperature", "0.7"))
+                    except ValueError:
+                        req_temp = 0.7
+                    do_chat_gemini(current_history, model=req_model, api_key=req_api_key, temperature=req_temp)
+                else:
+                    req_model = current_settings.get("model", MODEL)
+                    try:
+                        req_temp = float(current_settings.get("temperature", "0.7"))
+                    except ValueError:
+                        req_temp = 0.7
+                    try:
+                        req_ctx = int(current_settings.get("num_ctx", "8192"))
+                    except ValueError:
+                        req_ctx = 8192
+                    req_think = bool(current_settings.get("thinking", False))
+                    do_chat(current_history, model=req_model, temperature=req_temp, num_ctx=req_ctx, thinking=req_think)
 
         # ── Comando sudo via pkexec ───────────────────────────────────────
         elif msg_type == "run_sudo":
@@ -1460,18 +1649,29 @@ def main():
                 emit({"type": "command_result", "command": f"sudo {cmd}", "output": out, "returncode": -1, "success": False})
             
             if current_history and current_history[-1].get("tool_calls"):
-                current_history.append({"role": "tool", "name": "run_command", "content": out[:4096] or "(sin salida)"})
-                req_model = current_settings.get("model", MODEL)
-                try:
-                    req_temp = float(current_settings.get("temperature", "0.7"))
-                except ValueError:
-                    req_temp = 0.7
-                try:
-                    req_ctx = int(current_settings.get("num_ctx", "8192"))
-                except ValueError:
-                    req_ctx = 8192
-                req_think = bool(current_settings.get("thinking", False))
-                do_chat(current_history, model=req_model, temperature=req_temp, num_ctx=req_ctx, thinking=req_think)
+                t_id = current_history[-1]["tool_calls"][-1].get("id", "")
+                current_history.append({"role": "tool", "tool_call_id": t_id, "name": "run_command", "content": out[:4096] or "(sin salida)"})
+                provider = current_settings.get("provider", "Ollama")
+                if provider == "Gemini":
+                    req_model = current_settings.get("gemini_model", "gemini-2.5-flash")
+                    req_api_key = current_settings.get("gemini_api_key", "")
+                    try:
+                        req_temp = float(current_settings.get("temperature", "0.7"))
+                    except ValueError:
+                        req_temp = 0.7
+                    do_chat_gemini(current_history, model=req_model, api_key=req_api_key, temperature=req_temp)
+                else:
+                    req_model = current_settings.get("model", MODEL)
+                    try:
+                        req_temp = float(current_settings.get("temperature", "0.7"))
+                    except ValueError:
+                        req_temp = 0.7
+                    try:
+                        req_ctx = int(current_settings.get("num_ctx", "8192"))
+                    except ValueError:
+                        req_ctx = 8192
+                    req_think = bool(current_settings.get("thinking", False))
+                    do_chat(current_history, model=req_model, temperature=req_temp, num_ctx=req_ctx, thinking=req_think)
 
         # ── Ping / Cancel / Voice ─────────────────────────────────────────
         elif msg_type == "ping":

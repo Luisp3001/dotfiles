@@ -15,16 +15,22 @@ Item {
     property bool   isCenterTabActive: false
     property string tabIcon: "󱜚"
 
-    readonly property int expandedWidth:  520
+    readonly property int expandedWidth:  600
     readonly property int expandedHeight: 560
 
     // ── Configuración de IA ───────────────────────────────────────────────
+    property string aiProvider: "Ollama"
+    property string geminiApiKey: ""
+    property string geminiModel: "gemini-2.5-flash"
     property string aiModel: "qwen3.5:9b"
     property string aiTemperature: "0.7"
     property string aiNumCtx: "8192"
     property bool   aiThinking: false
 
     property var settingsConfig: [
+        { id: "aiProvider", name: "Proveedor de IA (Ollama / Gemini)", type: "string", defaultValue: "Ollama" },
+        { id: "geminiApiKey", name: "API Key de Gemini", type: "string", defaultValue: "" },
+        { id: "geminiModel", name: "Modelo de Gemini", type: "string", defaultValue: "gemini-2.5-flash" },
         { id: "aiModel", name: "Modelo de Ollama", type: "string", defaultValue: "qwen3.5:9b" },
         { id: "aiTemperature", name: "Temperatura (0.0 - 1.0)", type: "string", defaultValue: "0.7" },
         { id: "aiNumCtx", name: "Contexto (num_ctx)", type: "string", defaultValue: "8192" },
@@ -33,6 +39,9 @@ Item {
 
     Component.onCompleted: {
         if (parent && parent.getSetting) {
+            aiProvider = parent.getSetting(pluginId, "aiProvider", "Ollama")
+            geminiApiKey = parent.getSetting(pluginId, "geminiApiKey", "")
+            geminiModel = parent.getSetting(pluginId, "geminiModel", "gemini-2.5-flash")
             aiModel = parent.getSetting(pluginId, "aiModel", "qwen3.5:9b")
             aiTemperature = parent.getSetting(pluginId, "aiTemperature", "0.7")
             aiNumCtx = parent.getSetting(pluginId, "aiNumCtx", "8192")
@@ -44,7 +53,10 @@ Item {
         target: widget.parent && widget.parent.settingChanged ? widget.parent : null
         function onSettingChanged(id, key, value) {
             if (id === widget.pluginId) {
-                if (key === "aiModel") widget.aiModel = value
+                if (key === "aiProvider") widget.aiProvider = value
+                else if (key === "geminiApiKey") widget.geminiApiKey = value
+                else if (key === "geminiModel") widget.geminiModel = value
+                else if (key === "aiModel") widget.aiModel = value
                 else if (key === "aiTemperature") widget.aiTemperature = value
                 else if (key === "aiNumCtx") widget.aiNumCtx = value
                 else if (key === "aiThinking") widget.aiThinking = value
@@ -183,6 +195,9 @@ Item {
             message: message, 
             history: history,
             settings: {
+                provider: widget.aiProvider,
+                gemini_api_key: widget.geminiApiKey,
+                gemini_model: widget.geminiModel,
                 model: widget.aiModel,
                 temperature: widget.aiTemperature,
                 num_ctx: widget.aiNumCtx,
