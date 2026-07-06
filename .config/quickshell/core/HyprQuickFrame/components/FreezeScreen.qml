@@ -10,6 +10,7 @@ PanelWindow {
 
     screen: targetScreen
     exclusionMode: ExclusionMode.Ignore
+    WlrLayershell.namespace: "freeze_screen"
     WlrLayershell.layer: WlrLayer.Top
     WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
 

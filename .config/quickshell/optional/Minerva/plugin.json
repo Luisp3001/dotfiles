@@ -1,0 +1,9 @@
+{
+  "id": "com.luisp.minerva",
+  "name": "Minerva",
+  "description": "Asistente de IA integrada en el escritorio. Soporta Ollama (local) y Gemini, con acceso al filesystem, comandos bash, Spotify, búsqueda web y memoria a largo plazo.",
+  "version": "1.0.0",
+  "author": "luisp",
+  "main": "Main.qml",
+  "type": "widget"
+}
