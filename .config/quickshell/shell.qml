@@ -82,6 +82,19 @@ ShellRoot {
     property int    osdValue: 0       // 0–100
     property string osdIcon: ""       // Nerd Font icon
 
+    // ── Minerva Voice State ─────────────────────────────────────────────
+    // Actualizado por el plugin Minerva → leído por CenterSection para
+    // mostrar la onda de voz en la isla en lugar del reloj.
+    property bool   minervaActive: false
+    // "idle" | "recording" | "transcribing" | "thinking" | "speaking"
+    property string minervaState: "idle"
+    // Métricas de audio en tiempo real para el SiriOrb ShaderEffect
+    property real audioRms:   0.0    // RMS (volumen normalizado 0–1)
+    property real audioBand0: 0.0    // sub-bass  (20–80 Hz)
+    property real audioBand1: 0.0    // bass      (80–300 Hz)
+    property real audioBand2: 0.0    // mids      (300–2000 Hz)
+    property real audioBand3: 0.0    // highs     (2000–8000 Hz)
+
     // ── Volume Monitoring (Pipewire) ───────────────────────────────────
     property int _lastVolume: -1
 

@@ -49,73 +49,39 @@ def tool_read_file(path: str) -> str:
         return f"Error leyendo archivo: {e}"
 
 
-def tool_delete_file(path: str) -> str:
+def tool_read_pdf(path: str) -> str:
     exp = str(pathlib.Path(path).expanduser())
     if not is_safe_path(exp):
-        return f"Acceso denegado: solo {HOME}"
+        return f"Acceso denegado: solo se permite dentro de {HOME}"
     try:
         p = pathlib.Path(exp)
-        if not p.exists():
-            return f"No existe: {exp}"
-        if p.is_dir():
-            shutil.rmtree(exp)
-        else:
-            p.unlink()
-        return f"Eliminado exitosamente: {exp}"
+        if not p.exists() or not p.is_file():
+            return f"Archivo inválido o no existe: {exp}"
+        r = subprocess.run(["pdftotext", exp, "-"], capture_output=True, text=True, timeout=10)
+        text = r.stdout
+        if r.returncode != 0:
+            return f"Error extrayendo PDF: {r.stderr}"
+        if len(text) > MAX_FILE:
+            text = text[:MAX_FILE] + f"\n\n[... truncado: mostrando {MAX_FILE} de {len(text)} bytes ...]"
+        return text
     except Exception as e:
-        return f"Error eliminando: {e}"
+        return f"Error leyendo PDF: {e}"
 
 
-def tool_create_directory(path: str) -> str:
+def tool_read_docx(path: str) -> str:
     exp = str(pathlib.Path(path).expanduser())
     if not is_safe_path(exp):
-        return f"Acceso denegado: solo {HOME}"
+        return f"Acceso denegado: solo se permite dentro de {HOME}"
     try:
-        pathlib.Path(exp).mkdir(parents=True, exist_ok=True)
-        return f"Directorio creado: {exp}"
+        p = pathlib.Path(exp)
+        if not p.exists() or not p.is_file():
+            return f"Archivo inválido o no existe: {exp}"
+        r = subprocess.run(["pandoc", "-f", "docx", "-t", "markdown", exp], capture_output=True, text=True, timeout=10)
+        text = r.stdout
+        if r.returncode != 0:
+            return f"Error extrayendo DOCX: {r.stderr}"
+        if len(text) > MAX_FILE:
+            text = text[:MAX_FILE] + f"\n\n[... truncado: mostrando {MAX_FILE} de {len(text)} bytes ...]"
+        return text
     except Exception as e:
-        return f"Error creando directorio: {e}"
-
-
-def tool_move_file(source: str, destination: str) -> str:
-    src_exp = str(pathlib.Path(source).expanduser())
-    dst_exp = str(pathlib.Path(destination).expanduser())
-    if not is_safe_path(src_exp) or not is_safe_path(dst_exp):
-        return f"Acceso denegado: origen y destino deben estar en {HOME}"
-    try:
-        if not pathlib.Path(src_exp).exists():
-            return f"Origen no existe: {src_exp}"
-        shutil.move(src_exp, dst_exp)
-        return f"Movido exitosamente a: {dst_exp}"
-    except Exception as e:
-        return f"Error moviendo: {e}"
-
-
-def tool_find_files(directory: str, pattern: str) -> str:
-    exp = str(pathlib.Path(directory).expanduser())
-    if not is_safe_path(exp):
-        return f"Acceso denegado: solo {HOME}"
-    try:
-        r = subprocess.run(
-            ["find", exp, "-name", pattern],
-            capture_output=True, text=True, timeout=10
-        )
-        out = r.stdout if r.returncode == 0 else r.stderr
-        return out[:MAX_DIR] if out else "No se encontraron resultados"
-    except Exception as e:
-        return f"Error buscando archivos: {e}"
-
-
-def tool_search_text(path: str, query: str) -> str:
-    exp = str(pathlib.Path(path).expanduser())
-    if not is_safe_path(exp):
-        return f"Acceso denegado: solo {HOME}"
-    try:
-        r = subprocess.run(
-            ["grep", "-rn", query, exp],
-            capture_output=True, text=True, timeout=10
-        )
-        out = r.stdout if r.returncode == 0 else r.stderr
-        return out[:MAX_FILE] if out else "No se encontraron coincidencias"
-    except Exception as e:
-        return f"Error buscando texto: {e}"
+        return f"Error leyendo DOCX: {e}"

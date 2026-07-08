@@ -3,7 +3,6 @@
 import QtQuick
 import Quickshell
 import Quickshell.Io
-import Quickshell.Wayland
 import "../../style"
 
 Item {
@@ -16,7 +15,7 @@ Item {
     property bool   isCenterTabActive: false
     property string tabIcon: "󱜚"
 
-    property bool showOnlyOrb: false
+    property bool showOnlyOrb: false  // kept for legacy compat, no longer used
     readonly property int expandedWidth:  600
     readonly property int expandedHeight: 560
 
@@ -158,6 +157,18 @@ Item {
         xhr.send(JSON.stringify(obj))
     }
 
+    // ── Helpers para actualizar estado global de voz ───────────────────────
+    function _updateMinervaState() {
+        if (!widget.shellRoot) return
+        var active = widget.isRecording || widget.isTranscribing || widget.isThinking || widget.isSpeaking
+        widget.shellRoot.minervaActive = active
+        if (widget.isRecording)         widget.shellRoot.minervaState = "recording"
+        else if (widget.isTranscribing) widget.shellRoot.minervaState = "transcribing"
+        else if (widget.isThinking)     widget.shellRoot.minervaState = "thinking"
+        else if (widget.isSpeaking)     widget.shellRoot.minervaState = "speaking"
+        else                            widget.shellRoot.minervaState = "idle"
+    }
+
     function onBackendLine(msg) {
         // Actualizar estado del widget
         switch (msg.type) {
@@ -166,12 +177,11 @@ Item {
                 break
             case "token":
                 isThinking = true
+                _updateMinervaState()
                 break
             case "done":
                 isThinking = false
-                if (widget.showOnlyOrb && !isSpeaking) {
-                    hideOrbTimer.restart()
-                }
+                _updateMinervaState()
                 // Extraer snippet visible (sin líneas TOOL_CALL)
                 if (msg.full_response) {
                     var lines = msg.full_response.split("\n")
@@ -189,11 +199,15 @@ Item {
             case "sudo_required":
             case "run_command":
                 isThinking = false
+                _updateMinervaState()
                 break
             case "wake_word_detected":
                 if (!isRecording) {
                     toggleVoice()
-                    widget.showOnlyOrb = true
+                    // Opción A: cerrar el panel expandido al activar voz
+                    if (widget.shellRoot && widget.shellRoot.activeDynamicWidget === widget) {
+                        if (widget.rootWidget) widget.rootWidget.toggleDynamicWidget(widget)
+                    }
                 }
                 break
             case "silence_detected":
@@ -203,12 +217,15 @@ Item {
                 break
             case "voice_recording_started":
                 isRecording = true
+                _updateMinervaState()
                 break
             case "voice_recording_stopped":
                 isRecording = false
+                _updateMinervaState()
                 break
             case "voice_transcribing":
                 isTranscribing = true
+                _updateMinervaState()
                 break
             case "voice_recognized":
                 isRecording = false
@@ -221,16 +238,34 @@ Item {
                         needsConfirm: false, needsSudo: false, isSystem: false
                     })
                     sendChat(msg.text, conversationHistory.slice())
+                } else {
+                    _updateMinervaState()
                 }
                 break
             case "voice_speaking_started":
                 isSpeaking = true
-                hideOrbTimer.stop()
+                _updateMinervaState()
                 break
             case "voice_speaking_stopped":
                 isSpeaking = false
-                if (widget.showOnlyOrb) {
-                    widget.showOnlyOrb = false
+                // Resetear métricas de audio al dejar de hablar
+                if (widget.shellRoot) {
+                    widget.shellRoot.audioRms   = 0.0
+                    widget.shellRoot.audioBand0 = 0.0
+                    widget.shellRoot.audioBand1 = 0.0
+                    widget.shellRoot.audioBand2 = 0.0
+                    widget.shellRoot.audioBand3 = 0.0
+                }
+                _updateMinervaState()
+                break
+            case "audio_data":
+                // Métricas de audio en tiempo real → SiriOrb shader
+                if (widget.shellRoot) {
+                    widget.shellRoot.audioRms   = msg.rms   || 0.0
+                    widget.shellRoot.audioBand0 = msg.band0 || 0.0
+                    widget.shellRoot.audioBand1 = msg.band1 || 0.0
+                    widget.shellRoot.audioBand2 = msg.band2 || 0.0
+                    widget.shellRoot.audioBand3 = msg.band3 || 0.0
                 }
                 break
         }
@@ -241,6 +276,7 @@ Item {
     function sendChat(message, history) {
         if (isRecording) { toggleVoice() }
         isThinking = true
+        _updateMinervaState()
         sendToBackend({ 
             type: "chat", 
             message: message, 
@@ -344,34 +380,26 @@ Item {
                 id: cwRow
                 anchors.centerIn: parent
                 spacing: 7
+                
+                // Ocultar texto cuando el SiriOrb está activo para que no interfieran
+                opacity: (widget.isRecording || widget.isTranscribing || widget.isThinking || widget.isSpeaking) ? 0.0 : 1.0
+                Behavior on opacity { NumberAnimation { duration: 300 } }
 
                 Text {
                     anchors.verticalCenter: parent.verticalCenter
-                    text: widget.isRecording ? "󰍬" : (widget.isTranscribing ? "󰈔" : "󱜚")
+                    text: "󱜚"
                     font.family: Theme.fontMono
                     font.pixelSize: 13
-                    color: widget.isRecording ? Theme.danger : (widget.isThinking ? Theme.accent : Theme.textMuted)
-
-                    SequentialAnimation on opacity {
-                        running: widget.isThinking || widget.isRecording
-                        loops:   Animation.Infinite
-                        NumberAnimation { to: 0.15; duration: 700 }
-                        NumberAnimation { to: 1.0;  duration: 700 }
-                        onStopped: opacity = 1.0
-                    }
+                    color: Theme.accent
                 }
 
                 Text {
                     anchors.verticalCenter: parent.verticalCenter
-                    text: widget.isRecording   ? "Escuchando comando..."
-                        : widget.isTranscribing ? "Transcribiendo..."
-                        : widget.isThinking    ? "Pensando…"
-                        : !widget.backendReady ? "Iniciando Minerva…"
-                        : "Minerva"
+                    text: !widget.backendReady ? "Iniciando Minerva…" : "Minerva"
                     font.family: Theme.fontSans
                     font.pixelSize: 12
                     font.weight:    Font.DemiBold
-                    color: widget.isRecording ? Theme.danger : Theme.textPrimary
+                    color: Theme.textPrimary
                     elide: Text.ElideRight
                     width: Math.min(implicitWidth, 190)
                 }
@@ -382,7 +410,7 @@ Item {
                     font.family: Theme.fontMono
                     font.pixelSize: 12
                     color: Theme.accent
-                    visible: widget.backendReady && !widget.isRecording && !widget.isTranscribing && !widget.isThinking
+                    visible: widget.backendReady
                     opacity: 0.5
                 }
             }
@@ -405,47 +433,11 @@ Item {
         }
     }
 
-    // ── Timer para ocultar Orbe ───────────────────────────────────────────
+    // ── Timer legacy (ya no se usa) ──────────────────────────────────────
     Timer {
         id: hideOrbTimer
-        interval: 1500 // Da tiempo al TTS de arrancar
-        onTriggered: {
-            if (widget.showOnlyOrb && !widget.isSpeaking && !widget.isThinking) {
-                widget.showOnlyOrb = false
-            }
-        }
-    }
-
-    // ── Ventana Flotante del Orbe (Voice Mode) ────────────────────────────
-    PanelWindow {
-        id: orbWindow
-        visible: widget.showOnlyOrb
-        color: Qt.rgba(0, 0, 0, 0.45) // Fondo sutilmente oscurecido
-        anchors { top: true; bottom: true; left: true; right: true }
-        exclusiveZone: -1
-        WlrLayershell.namespace: "minerva_orb"
-        WlrLayershell.layer: WlrLayer.Overlay
-        
-        SiriOrb {
-            anchors.centerIn: parent
-            width: 320
-            height: 320
-            isRecording: widget.isRecording
-            isTranscribing: widget.isTranscribing
-            isThinking: widget.isThinking
-            isSpeaking: widget.isSpeaking
-        }
-        
-        // Al darle clic, vuelve al chat normal
-        MouseArea {
-            anchors.fill: parent
-            cursorShape: Qt.PointingHandCursor
-            onClicked: {
-                widget.showOnlyOrb = false
-                if (widget.rootWidget && !widget.isCenterTabActive) {
-                    widget.rootWidget.toggleDynamicWidget(widget)
-                }
-            }
-        }
+        interval: 1500
+        onTriggered: { /* no-op: lógica migrada a _updateMinervaState */ }
     }
 }
+

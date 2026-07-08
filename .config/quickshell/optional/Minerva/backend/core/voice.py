@@ -15,6 +15,7 @@ import time
 
 from .config import VOICE_AVAILABLE, VOSK_AVAILABLE, VOICE_DIR
 from .io import emit
+from .audio_analyzer import AudioAnalyzer
 
 if VOICE_AVAILABLE:
     import numpy as np
@@ -41,6 +42,9 @@ class VoiceManager:
         self.tts_thread    = None
         self.play_thread   = None
         self.tts_stop_event = threading.Event()
+
+        # Analizador de audio para métricas de visualización (RMS + FFT)
+        self.analyzer = AudioAnalyzer(smoothing=0.3)
 
         if VOICE_AVAILABLE:
             os.makedirs(VOICE_DIR, exist_ok=True)
@@ -111,27 +115,50 @@ class VoiceManager:
 
     def _play_worker(self):
         is_speaking = False
+        _zero_audio = {"type": "audio_data", "source": "tts",
+                       "rms": 0, "band0": 0, "band1": 0, "band2": 0, "band3": 0}
         while True:
             item = self.play_queue.get()
             if item is None:
                 if is_speaking:
                     emit({"type": "voice_speaking_stopped"})
+                    self.analyzer.reset()
+                    emit(_zero_audio)
                     is_speaking = False
                 break
-                
+
             if not is_speaking:
                 emit({"type": "voice_speaking_started"})
                 is_speaking = True
-                
+
             audio, sample_rate = item
             if not self.tts_stop_event.is_set():
+                # Subdividir en chunks de ~20ms para análisis a ~50fps
+                sub_size = max(1, int(sample_rate * 0.02))
+                metrics_list = []
+                for j in range(0, len(audio), sub_size):
+                    sub = audio[j:j + sub_size]
+                    metrics_list.append(self.analyzer.analyze(sub, sample_rate))
+
+                # Reproducir el chunk completo (non-blocking)
                 sd.play(audio, sample_rate)
+
+                # Emitir métricas a intervalos de ~20ms durante la reproducción
+                for m in metrics_list:
+                    if self.tts_stop_event.is_set():
+                        break
+                    emit({"type": "audio_data", "source": "tts", **m})
+                    time.sleep(0.02)
+
+                # Esperar a que termine la reproducción del chunk
                 sd.wait()
-                
+
             self.play_queue.task_done()
-            
+
             if self.play_queue.empty() and is_speaking:
                 emit({"type": "voice_speaking_stopped"})
+                self.analyzer.reset()
+                emit(_zero_audio)
                 is_speaking = False
 
     def stop_tts(self):
@@ -149,6 +176,10 @@ class VoiceManager:
                 self.play_queue.get_nowait()
             except Exception:
                 pass
+        # Resetear métricas de audio y notificar al frontend
+        self.analyzer.reset()
+        emit({"type": "audio_data", "source": "tts",
+              "rms": 0, "band0": 0, "band1": 0, "band2": 0, "band3": 0})
 
     # ── Wake word (Vosk) ──────────────────────────────────────────────────────
 
@@ -157,7 +188,7 @@ class VoiceManager:
             return
         try:
             with sd.RawInputStream(
-                samplerate=16000, blocksize=8000, dtype='int16',
+                samplerate=16000, blocksize=320, dtype='int16',
                 channels=1, callback=self.audio_callback
             ):
                 while True:
@@ -169,6 +200,10 @@ class VoiceManager:
         if self.is_recording:
             audio_np = np.frombuffer(indata, dtype=np.int16).astype(np.float32) / 32768.0
             self.audio_data.append(audio_np.copy())
+
+            # Emitir métricas de audio del micrófono para el SiriOrb
+            metrics = self.analyzer.analyze(audio_np, 16000)
+            emit({"type": "audio_data", "source": "mic", **metrics})
 
             if self.vosk_recognizer:
                 is_final = self.vosk_recognizer.AcceptWaveform(bytes(indata))
@@ -204,7 +239,7 @@ class VoiceManager:
             self.audio_data   = []
             if not getattr(self, "wake_word_thread", None) or not self.wake_word_thread.is_alive():
                 self.stream = sd.RawInputStream(
-                    samplerate=16000, blocksize=8000, dtype='int16',
+                    samplerate=16000, blocksize=320, dtype='int16',
                     channels=1, callback=self.audio_callback
                 )
                 self.stream.start()

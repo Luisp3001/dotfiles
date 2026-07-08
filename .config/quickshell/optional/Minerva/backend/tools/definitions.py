@@ -23,7 +23,7 @@ SYSTEM_PROMPT = f"""Eres Minerva, una asistente inteligente integrada en el escr
 - **NUNCA uses formato markdown (como asteriscos, negritas o cursivas).** El usuario te escucha a través de voz y los símbolos se leerían en voz alta (ej: "asterisco hola asterisco"). Genera solo texto plano.
 
 ## Herramientas disponibles
-- **Filesystem**: Puedes listar directorios (list_dir) y leer archivos (read_file) dentro de {HOME}.
+- **Filesystem**: Puedes listar directorios (list_dir) y leer archivos (read_file, read_pdf, read_docx) dentro de {HOME}.
 - **Comandos**: Puedes ejecutar comandos bash (run_command). Los destructivos o con sudo pedirán confirmación.
 - **Búsqueda web** (web_search): Tienes acceso a internet en tiempo real. Úsala cuando:
   - El usuario pregunte por noticias, eventos recientes o información que puede haber cambiado.
@@ -31,7 +31,12 @@ SYSTEM_PROMPT = f"""Eres Minerva, una asistente inteligente integrada en el escr
   - Tu conocimiento interno pueda estar desactualizado.
   - Te pregunten "¿cuál es la última versión de...?", "¿qué pasó con...?", "precio de...", etc.
   - NO la uses para información atemporal o conceptual que ya conoces.
-- **Memoria a largo plazo** (memorize_fact): Úsala para guardar preferencias del usuario, datos personales o hechos importantes que el usuario mencione, para recordarlos en futuras sesiones.
+- **Memoria a largo plazo** (memorize_fact): Usa esta herramienta para guardar preferencias del usuario, datos personales o hechos importantes que el usuario mencione, para recordarlos en futuras sesiones.
+- **Captura de pantalla** (capture_screen): Toma una captura de pantalla en tiempo real para ver exactamente lo que el usuario tiene en su monitor. Usala cuando:
+  - El usuario te pida analizar, describir o evaluar lo que hay en su pantalla.
+  - Necesites contexto visual para responder (ej: "que ves en mi pantalla", "que app tengo abierta", "mira esto", "que dice ahi").
+  - El usuario quiera que compruebes algo visual sin tener que describirlo.
+  - Opcionalmente puedes especificar el nombre del monitor (output) si el usuario lo indica.
 - **Spotify** (spotify_music): Controla Spotify del usuario. Acciones disponibles:
   - "search": Buscar canciones, artistas, albums o playlists. Requiere "query".
   - "play": Reproducir. Puedes pasar un "uri" de Spotify o un "query" para buscar y reproducir directamente.
@@ -91,6 +96,40 @@ OLLAMA_TOOLS = [
                     "path": {
                         "type": "string",
                         "description": "La ruta absoluta del archivo a leer"
+                    }
+                },
+                "required": ["path"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_pdf",
+            "description": "Lee el contenido de un archivo PDF extraído a texto",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "La ruta absoluta del archivo PDF a leer"
+                    }
+                },
+                "required": ["path"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_docx",
+            "description": "Lee el contenido de un archivo DOCX de Word extraído a markdown",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "La ruta absoluta del archivo DOCX a leer"
                     }
                 },
                 "required": ["path"]
@@ -172,103 +211,6 @@ OLLAMA_TOOLS = [
     {
         "type": "function",
         "function": {
-            "name": "delete_file",
-            "description": "Elimina un archivo o directorio vacío de forma permanente (solo dentro de HOME)",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "La ruta absoluta del archivo o directorio a eliminar"
-                    }
-                },
-                "required": ["path"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "create_directory",
-            "description": "Crea un nuevo directorio (solo dentro de HOME)",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "La ruta absoluta del directorio a crear"
-                    }
-                },
-                "required": ["path"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "move_file",
-            "description": "Mueve o renombra un archivo o directorio (solo dentro de HOME)",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "source": {
-                        "type": "string",
-                        "description": "La ruta absoluta de origen"
-                    },
-                    "destination": {
-                        "type": "string",
-                        "description": "La ruta absoluta de destino"
-                    }
-                },
-                "required": ["source", "destination"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "find_files",
-            "description": "Busca archivos o directorios por patrón de nombre",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "directory": {
-                        "type": "string",
-                        "description": "Directorio donde iniciar la busqueda"
-                    },
-                    "pattern": {
-                        "type": "string",
-                        "description": "El patron de busqueda, ej: '*.txt' o '*nombre*'"
-                    }
-                },
-                "required": ["directory", "pattern"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "search_text",
-            "description": "Busca texto específico dentro de archivos o directorios usando grep",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "Ruta absoluta del archivo o directorio donde buscar"
-                    },
-                    "query": {
-                        "type": "string",
-                        "description": "El texto o expresión regular a buscar"
-                    }
-                },
-                "required": ["path", "query"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
             "name": "memorize_fact",
             "description": "Guarda un hecho importante, preferencia del usuario o recuerdo a largo plazo en la memoria permanente de ChromaDB.",
             "parameters": {
@@ -299,5 +241,23 @@ OLLAMA_TOOLS = [
                 "required": ["query"]
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "capture_screen",
+            "description": "Toma una captura de pantalla en tiempo real para ver lo que el usuario tiene en su monitor. Úsala cuando el usuario pida analizar, describir o evaluar su pantalla, o cuando necesites contexto visual.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "output": {
+                        "type": "string",
+                        "description": "Nombre del monitor Wayland a capturar (ej: 'DP-1', 'HDMI-A-1'). Omite este parámetro para capturar toda la pantalla."
+                    }
+                },
+                "required": []
+            }
+        }
     }
 ]
+

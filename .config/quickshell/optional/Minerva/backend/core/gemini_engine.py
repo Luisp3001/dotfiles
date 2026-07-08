@@ -15,6 +15,7 @@ import urllib.request
 from .io     import emit, emit_error
 from .voice  import voice_mgr, VOICE_AVAILABLE
 from ..tools import dispatch_tool, get_relevant_tools, OLLAMA_TOOLS, RUN_COMMAND_PENDING
+from ..tools.screen import ScreenCapture
 
 _GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
 
@@ -168,12 +169,21 @@ def do_chat_gemini(
                 # run_command ya emitió el evento; salir y esperar confirmación del QML
                 return
 
-            emit({"type": "tool_result", "tool": tool_name, "result": result})
-            history.append({
-                "role":         "tool",
-                "tool_call_id": tc.get("id"),
-                "name":         tool_name,
-                "content":      result
-            })
+            if isinstance(result, ScreenCapture):
+                # Inyectar la captura como mensaje de usuario con imagen (formato OpenAI)
+                emit({"type": "tool_result", "tool": tool_name, "result": result.summary_text()})
+                history.append({
+                    "role":      "user",
+                    "content":   "Aquí está la captura de pantalla que tomé. Analízala y responde.",
+                    "image_b64": result.b64
+                })
+            else:
+                emit({"type": "tool_result", "tool": tool_name, "result": result})
+                history.append({
+                    "role":         "tool",
+                    "tool_call_id": tc.get("id"),
+                    "name":         tool_name,
+                    "content":      result
+                })
 
     emit_error("Demasiadas iteraciones de herramientas (límite: 6)")

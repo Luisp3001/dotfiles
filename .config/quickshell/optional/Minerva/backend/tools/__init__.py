@@ -13,13 +13,11 @@ import re
 import sys
 
 from .definitions   import OLLAMA_TOOLS, SYSTEM_PROMPT  # noqa: F401
-from .filesystem    import (
-    tool_list_dir, tool_read_file, tool_delete_file,
-    tool_create_directory, tool_move_file, tool_find_files, tool_search_text
-)
+from .filesystem    import tool_list_dir, tool_read_file, tool_read_pdf, tool_read_docx
 from .system        import tool_web_search, tool_launch_app
 from .spotify       import tool_spotify_music
 from .memory_tool   import tool_memorize_fact
+from .screen        import tool_capture_screen, ScreenCapture
 from ..core.memory  import chroma_client, CHROMADB_AVAILABLE
 from ..core.io      import classify_cmd, emit
 from ..core.config  import HOME
@@ -92,20 +90,12 @@ def dispatch_tool(tool_name: str, args: dict) -> "str | _RunCommandPending":
     elif tool_name == "read_file":
         return tool_read_file(args.get("path", ""))
 
-    elif tool_name == "delete_file":
-        return tool_delete_file(args.get("path", ""))
+    elif tool_name == "read_pdf":
+        return tool_read_pdf(args.get("path", ""))
 
-    elif tool_name == "create_directory":
-        return tool_create_directory(args.get("path", ""))
+    elif tool_name == "read_docx":
+        return tool_read_docx(args.get("path", ""))
 
-    elif tool_name == "move_file":
-        return tool_move_file(args.get("source", ""), args.get("destination", ""))
-
-    elif tool_name == "find_files":
-        return tool_find_files(args.get("directory", ""), args.get("pattern", ""))
-
-    elif tool_name == "search_text":
-        return tool_search_text(args.get("path", ""), args.get("query", ""))
 
     elif tool_name == "web_search":
         try:
@@ -149,6 +139,16 @@ def dispatch_tool(tool_name: str, args: dict) -> "str | _RunCommandPending":
             emit({"type": "run_command", "command": cmd})
         # El engine debe return aquí; la ejecución real llega vía run_confirmed/run_sudo
         return RUN_COMMAND_PENDING
+
+    elif tool_name == "capture_screen":
+        result = tool_capture_screen(output=args.get("output", ""))
+        if isinstance(result, ScreenCapture):
+            # Inyectar la imagen en el historial del motor (campo image_b64)
+            # Los engines (ollama_engine, gemini_engine) ya saben manejar este campo.
+            # Retornamos un dict especial que los engines detectan para hacer el inject.
+            return result
+        # Si hubo error, result es un str con el mensaje
+        return result
 
     else:
         return "Herramienta desconocida"

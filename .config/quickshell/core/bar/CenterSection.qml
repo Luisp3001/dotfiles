@@ -1,7 +1,8 @@
-// modules/bar/CenterSection.qml — Sección central con OSD de volumen/brillo y pestañas dinámicas
+// modules/bar/CenterSection.qml — Sección central con OSD de volumen/brillo, pestañas dinámicas y SiriOrb de Minerva
 import QtQuick
 import "../../components"
 import "../../style"
+import "../../optional/Minerva" as Minerva
 
 Item {
     id: root
@@ -70,11 +71,18 @@ Item {
     readonly property int osdValue: shellRoot ? shellRoot.osdValue : 0
     readonly property string osdIcon: shellRoot ? shellRoot.osdIcon : ""
 
+    // ── Minerva voice state ───────────────────────────────────────────
+    // La onda de Minerva tiene prioridad sobre el OSD del sistema.
+    readonly property bool minervaActive: shellRoot ? shellRoot.minervaActive : false
+    readonly property string minervaState: shellRoot ? shellRoot.minervaState : "idle"
+    // El overlay activo en el notch: Minerva > OSD sistema > nada
+    readonly property bool anyOverlayActive: minervaActive || osdActive
+
     // ── Tabs Container ────────────────────────────────────────────────
     Item {
         id: tabsContainer
         anchors.fill: parent
-        opacity: root.osdActive ? 0.0 : 1.0
+        opacity: root.anyOverlayActive ? 0.0 : 1.0
         Behavior on opacity { NumberAnimation { duration: 220; easing.type: Easing.InOutQuad } }
 
         // Clock (Tab 0)
@@ -142,12 +150,36 @@ Item {
         }
     }
 
+    // ── SiriOrb Overlay (visible when Minerva voice is active) ─────────
+    // Tiene prioridad sobre el OSD de sistema.
+    Minerva.SiriOrb {
+        id: siriOrbOverlay
+        anchors.fill: parent
+        opacity: root.minervaActive ? 1.0 : 0.0
+        visible: opacity > 0
+        Behavior on opacity { NumberAnimation { duration: 300; easing.type: Easing.InOutQuad } }
+
+        isRecording:    root.minervaState === "recording"
+        isTranscribing: root.minervaState === "transcribing"
+        isThinking:     root.minervaState === "thinking"
+        isSpeaking:     root.minervaState === "speaking"
+
+        // Métricas de audio en tiempo real → shader uniforms
+        audioRms:   shellRoot ? shellRoot.audioRms   : 0.0
+        audioBand0: shellRoot ? shellRoot.audioBand0 : 0.0
+        audioBand1: shellRoot ? shellRoot.audioBand1 : 0.0
+        audioBand2: shellRoot ? shellRoot.audioBand2 : 0.0
+        audioBand3: shellRoot ? shellRoot.audioBand3 : 0.0
+    }
+
     // ── OSD Overlay (visible when volume/brightness changes) ──────────
+    // Solo se muestra si Minerva no está activa.
     Row {
         id: osdRow
         anchors.centerIn: parent
         spacing: 6
-        opacity: root.osdActive ? 1.0 : 0.0
+        // OSD solo visible si no está Minerva activa
+        opacity: (root.osdActive && !root.minervaActive) ? 1.0 : 0.0
         visible: opacity > 0
         Behavior on opacity { NumberAnimation { duration: 220; easing.type: Easing.InOutQuad } }
 

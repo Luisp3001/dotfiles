@@ -16,6 +16,7 @@ from .config  import MODEL
 from .io      import emit, emit_error
 from .voice   import voice_mgr, VOICE_AVAILABLE
 from ..tools  import dispatch_tool, get_relevant_tools, OLLAMA_TOOLS, RUN_COMMAND_PENDING
+from ..tools.screen import ScreenCapture
 
 
 def do_chat(
@@ -112,7 +113,16 @@ def do_chat(
                 # run_command ya emitió el evento; salir y esperar confirmación del QML
                 return
 
-            emit({"type": "tool_result", "tool": tool_name, "result": result})
-            history.append({"role": "tool", "name": tool_name, "content": result})
+            if isinstance(result, ScreenCapture):
+                # Inyectar la captura de pantalla como mensaje de usuario con imagen
+                emit({"type": "tool_result", "tool": tool_name, "result": result.summary_text()})
+                history.append({
+                    "role":      "user",
+                    "content":   "Aquí está la captura de pantalla que tomé. Analízala y responde.",
+                    "image_b64": result.b64
+                })
+            else:
+                emit({"type": "tool_result", "tool": tool_name, "result": result})
+                history.append({"role": "tool", "name": tool_name, "content": result})
 
     emit_error("Demasiadas iteraciones de herramientas (límite: 6)")
