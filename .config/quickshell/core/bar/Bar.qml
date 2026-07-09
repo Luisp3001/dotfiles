@@ -32,6 +32,10 @@ Item {
     property var pluginManifest: ({})
     property string pluginSourcePath: ""
 
+    // Estado para Command Approval (Minerva)
+    property bool isCommandApprovalExpanded: false
+    signal toggleCommandApproval()
+
     // Estado para arrastrar y soltar archivos (Hover global)
     property bool isFileHovered: false
 
@@ -93,6 +97,7 @@ Item {
         if (isWallpaperExpanded) return 1100
         if (isLauncherExpanded) return normalBaseWidth + 200
         if (isPluginInstallExpanded) return 400
+        if (isCommandApprovalExpanded) return 400
         if (activeDynamicWidget !== null) return activeDynamicWidget.expandedWidth || 400
         if (!isNotifExpanded) return baseIslandWidth
         
@@ -111,6 +116,7 @@ Item {
         if (isWallpaperExpanded) return 550
         if (isLauncherExpanded) return 500
         if (isPluginInstallExpanded) return (pluginInstallContent.preferredHeight + Theme.barHeight + 12)
+        if (isCommandApprovalExpanded) return (commandApprovalContent.preferredHeight + Theme.barHeight + 12)
         if (activeDynamicWidget !== null) return (activeDynamicWidget.expandedHeight || 200) + Theme.barHeight + 12 + 42
         if (!isNotifExpanded) return Theme.barHeight
         // Tab 0 = Panel principal con secciones
@@ -339,6 +345,30 @@ Item {
                     rootWidget: root
                     pluginManager: root.pluginManager
                     visible: true
+                }
+            }
+
+            // ── Contenido Expandido (Command Approval — Minerva) ──
+            Item {
+                id: expandedCommandApproval
+                anchors {
+                    top: parent.top
+                    topMargin: Theme.barHeight
+                    left: parent.left
+                    right: parent.right
+                    bottom: parent.bottom
+                }
+                
+                opacity: root.isCommandApprovalExpanded ? 1.0 : 0.0
+                visible: opacity > 0
+                Behavior on opacity { NumberAnimation { duration: 250; easing.type: Easing.InOutQuad } }
+
+                CommandApprovalContent {
+                    id: commandApprovalContent
+                    anchors.fill: parent
+                    anchors.margins: 12
+                    rootWidget: root
+                    shellRoot: root.shellRoot
                 }
             }
 
@@ -654,7 +684,7 @@ Item {
                 shellRoot: root.shellRoot
                 pluginManager: root.pluginManager
                 // Mostrar siempre si hay OSD; de lo contrario ocultar si la isla está expandida
-                opacity: (root.shellRoot && root.shellRoot.osdType !== "") ? 1.0 : (root.isFileHovered || root.isPluginInstallExpanded || root.isLauncherExpanded || root.isNotifExpanded || root.isWallpaperExpanded || root.activeDynamicWidget !== null ? 0.0 : 1.0)
+                opacity: (root.shellRoot && root.shellRoot.osdType !== "") ? 1.0 : (root.isFileHovered || root.isPluginInstallExpanded || root.isCommandApprovalExpanded || root.isLauncherExpanded || root.isNotifExpanded || root.isWallpaperExpanded || root.activeDynamicWidget !== null ? 0.0 : 1.0)
                 visible: opacity > 0
                 Behavior on opacity { NumberAnimation { duration: 200 } }
 

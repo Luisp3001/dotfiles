@@ -14,3 +14,4 @@ AirdropContent 1.0 AirdropContent.qml
 WallpaperPicker 1.0 WallpaperPicker.qml
 PluginInstallContent 1.0 PluginInstallContent.qml
 PluginsWidget 1.0 PluginsWidget.qml
+CommandApprovalContent 1.0 CommandApprovalContent.qml

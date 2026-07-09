@@ -37,21 +37,32 @@ Item {
             case "tool_result":
                 break   // interno, no mostrar
             case "run_command":
-                addCmdCard(msg.command || "", false, false)
+                // Safe commands execute automatically — show as running
+                aiWidget.msgModel.append({
+                    role: "command", content: msg.command || "", command: msg.command || "",
+                    cmdStatus: "running", needsConfirm: false, needsSudo: false, isSystem: false
+                })
+                scrollToBottom()
                 break
             case "confirm_required":
                 addCmdCard(msg.command || "", true, false)
                 aiWidget.pendingCmd    = msg.command || ""
                 aiWidget.pendingIsSudo = false
                 aiWidget.pendingReason = msg.reason  || "Comando potencialmente destructivo"
-                aiWidget.showConfirm   = true
+                // Solo mostrar overlay interno si la barra no lo está manejando
+                if (!(aiWidget.shellRoot && aiWidget.shellRoot.commandApprovalOpen)) {
+                    aiWidget.showConfirm = true
+                }
                 break
             case "sudo_required":
                 addCmdCard(msg.command || "", false, true)
                 aiWidget.pendingCmd    = msg.command || ""
                 aiWidget.pendingIsSudo = true
                 aiWidget.pendingReason = "Este comando requiere permisos de administrador (pkexec)"
-                aiWidget.showConfirm   = true
+                // Solo mostrar overlay interno si la barra no lo está manejando
+                if (!(aiWidget.shellRoot && aiWidget.shellRoot.commandApprovalOpen)) {
+                    aiWidget.showConfirm = true
+                }
                 break
             case "command_result":
                 // Marcar la tarjeta de comando como completada para detener spinner

@@ -129,16 +129,39 @@ def dispatch_tool(tool_name: str, args: dict) -> "str | _RunCommandPending":
         if cls == "sudo":
             clean = re.sub(r"^\s*sudo\s+", "", cmd)
             emit({"type": "sudo_required", "command": clean})
+            return RUN_COMMAND_PENDING
         elif cls == "destructive":
             emit({
                 "type":    "confirm_required",
                 "command": cmd,
                 "reason":  "Este comando puede eliminar o modificar datos de forma irreversible"
             })
+            return RUN_COMMAND_PENDING
         else:
+            # Comandos safe: ejecutar directamente sin esperar confirmación
             emit({"type": "run_command", "command": cmd})
-        # El engine debe return aquí; la ejecución real llega vía run_confirmed/run_sudo
-        return RUN_COMMAND_PENDING
+            try:
+                import subprocess as _sp
+                r = _sp.run(
+                    ["bash", "-c", cmd],
+                    capture_output=True, text=True, timeout=30,
+                    cwd=HOME, env={**__import__("os").environ}
+                )
+                out = (r.stdout + r.stderr).strip()
+                out = out[:4096] or "(sin salida)"
+                returncode = r.returncode
+            except _sp.TimeoutExpired:
+                out, returncode = "Tiempo de espera agotado (30s)", -1
+            except Exception as e:
+                out, returncode = str(e), -1
+            emit({
+                "type":       "command_result",
+                "command":    cmd,
+                "output":     out,
+                "returncode": returncode,
+                "success":    returncode == 0
+            })
+            return out
 
     elif tool_name == "capture_screen":
         result = tool_capture_screen(output=args.get("output", ""))

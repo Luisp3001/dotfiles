@@ -39,11 +39,20 @@ ShellRoot {
     property bool wallpaperOpen: false
     property bool airdropOpen: false
     property bool pluginInstallOpen: false
+    property bool commandApprovalOpen: false
     property var activeDynamicWidget: null
+
+    // ── Minerva Command Approval State ──────────────────────────────────
+    property string minervaPendingCmd: ""
+    property string minervaPendingReason: ""
+    property bool   minervaPendingIsSudo: false
+    property bool   minervaCommandSuccess: false
+    property string minervaCommandOutput: ""
+    signal minervaCommandResultReceived()
     property bool screenshotActive: false
     
     // Propiedad derivada que centraliza si la isla está expandida por CUALQUIER motivo (incluyendo futuros plugins dinámicos)
-    property bool isIslandExpanded: launcherOpen || notifOpen || wallpaperOpen || airdropOpen || pluginInstallOpen || activeDynamicWidget !== null
+    property bool isIslandExpanded: launcherOpen || notifOpen || wallpaperOpen || airdropOpen || pluginInstallOpen || commandApprovalOpen || activeDynamicWidget !== null
 
     // Función para cerrar cualquier panel/widget abierto
     function closeIsland() {
@@ -52,6 +61,7 @@ ShellRoot {
         wallpaperOpen = false;
         airdropOpen = false;
         pluginInstallOpen = false;
+        commandApprovalOpen = false;
         activeDynamicWidget = null;
     }
 
@@ -62,6 +72,7 @@ ShellRoot {
         else if (panelType === "notif") wasOpen = shell.notifOpen;
         else if (panelType === "wallpaper") wasOpen = shell.wallpaperOpen;
         else if (panelType === "pluginInstall") wasOpen = shell.pluginInstallOpen;
+        else if (panelType === "commandApproval") wasOpen = shell.commandApprovalOpen;
         
         shell.closeIsland();
         
@@ -70,6 +81,7 @@ ShellRoot {
             else if (panelType === "notif") shell.notifOpen = true;
             else if (panelType === "wallpaper") shell.wallpaperOpen = true;
             else if (panelType === "pluginInstall") shell.pluginInstallOpen = true;
+            else if (panelType === "commandApproval") shell.commandApprovalOpen = true;
         }
     }
     property alias pluginManager: pluginMgr
@@ -365,12 +377,14 @@ ShellRoot {
                     isNotifExpanded: shell.notifOpen
                     isWallpaperExpanded: shell.wallpaperOpen
                     isPluginInstallExpanded: shell.pluginInstallOpen
+                    isCommandApprovalExpanded: shell.commandApprovalOpen
                     activeDynamicWidget: shell.activeDynamicWidget
                     
                     onToggleLauncherExpanded: shell.togglePanel("launcher")
                     onToggleNotifExpanded: shell.togglePanel("notif")
                     onToggleWallpaperExpanded: shell.togglePanel("wallpaper")
                     onTogglePluginInstall: shell.togglePanel("pluginInstall")
+                    onToggleCommandApproval: shell.togglePanel("commandApproval")
 
                     // Escuchamos la señal del SystemTray para abrir el menú contextual
                     onTrayMenuRequested: (trayItem, gx, gy) => {

@@ -195,11 +195,29 @@ Item {
                 }
                 break
             case "error":
-            case "confirm_required":
-            case "sudo_required":
             case "run_command":
                 isThinking = false
                 _updateMinervaState()
+                break
+            case "confirm_required":
+            case "sudo_required":
+                isThinking = false
+                _updateMinervaState()
+                // Abrir la notificación de aprobación en la barra
+                if (widget.shellRoot) {
+                    widget.shellRoot.minervaPendingCmd = msg.command || ""
+                    widget.shellRoot.minervaPendingIsSudo = (msg.type === "sudo_required")
+                    widget.shellRoot.minervaPendingReason = msg.reason || ""
+                    widget.shellRoot.commandApprovalOpen = true
+                }
+                break
+            case "command_result":
+                // Actualizar el estado de la barra de aprobación si está abierta
+                if (widget.shellRoot && widget.shellRoot.commandApprovalOpen) {
+                    widget.shellRoot.minervaCommandSuccess = (msg.success !== false)
+                    widget.shellRoot.minervaCommandOutput = msg.output || ""
+                    widget.shellRoot.minervaCommandResultReceived()
+                }
                 break
             case "wake_word_detected":
                 if (!isRecording) {
