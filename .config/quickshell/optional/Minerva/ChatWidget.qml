@@ -341,7 +341,7 @@ Item {
                             radius: 16
                             color: Theme.accent
 
-                            Text {
+                            TextEdit {
                                 id: userTxt
                                 anchors.centerIn: parent
                                 width: parent.width - 30
@@ -349,7 +349,9 @@ Item {
                                 font.family: Theme.fontSans
                                 font.pixelSize: 13
                                 color: "#0d0d0d"
-                                wrapMode: Text.Wrap
+                                wrapMode: TextEdit.Wrap
+                                readOnly: true
+                                selectByMouse: true
                             }
                         }
 
@@ -365,7 +367,7 @@ Item {
                             border.width: 1
                             border.color: Qt.rgba(1, 1, 1, 0.09)
 
-                            Text {
+                            TextEdit {
                                 id: aiTxt
                                 anchors.centerIn: parent
                                 width: parent.width - 30
@@ -375,8 +377,10 @@ Item {
                                 font.family: Theme.fontSans
                                 font.pixelSize: 13
                                 color: Theme.textPrimary
-                                wrapMode: Text.Wrap
-                                textFormat: Text.PlainText
+                                wrapMode: TextEdit.Wrap
+                                textFormat: TextEdit.PlainText
+                                readOnly: true
+                                selectByMouse: true
                             }
                         }
 
@@ -450,7 +454,7 @@ Item {
                                     radius: 8
                                     color: Qt.rgba(0, 0, 0, 0.35)
 
-                                    Text {
+                                    TextEdit {
                                         id: cmdLineTxt
                                         anchors {
                                             left: parent.left; right: parent.right
@@ -461,21 +465,33 @@ Item {
                                         font.family: Theme.fontMono
                                         font.pixelSize: 12
                                         color: (model.needsSudo || model.needsConfirm) ? Theme.warning : Theme.accent
-                                        wrapMode: Text.Wrap
+                                        wrapMode: TextEdit.Wrap
+                                        readOnly: true
+                                        selectByMouse: true
                                     }
                                 }
 
                                 // Output del resultado
-                                Text {
+                                Flickable {
                                     visible: model.role === "result" && model.content.length > 0
                                     width: cardCol.width
-                                    text: model.content
-                                    font.family: Theme.fontMono
-                                    font.pixelSize: 11
-                                    color: model.cmdStatus === "success" ? Theme.textPrimary : Theme.danger
-                                    wrapMode: Text.Wrap
-                                    maximumLineCount: 14
-                                    elide: Text.ElideRight
+                                    height: Math.min(resultTxtEdit.implicitHeight, 230) // Approx 14 lines max height
+                                    contentWidth: width
+                                    contentHeight: resultTxtEdit.implicitHeight
+                                    clip: true
+                                    boundsBehavior: Flickable.StopAtBounds
+
+                                    TextEdit {
+                                        id: resultTxtEdit
+                                        width: parent.width
+                                        text: model.content
+                                        font.family: Theme.fontMono
+                                        font.pixelSize: 11
+                                        color: model.cmdStatus === "success" ? Theme.textPrimary : Theme.danger
+                                        wrapMode: TextEdit.Wrap
+                                        readOnly: true
+                                        selectByMouse: true
+                                    }
                                 }
 
                                 // Botones de acción (pendiente)
@@ -622,7 +638,7 @@ Item {
                         }
 
                         // ── Mensaje de sistema ────────────────────────────
-                        Text {
+                        TextEdit {
                             id: sysMsg
                             visible: model.isSystem
                             anchors.horizontalCenter: parent.horizontalCenter
@@ -631,6 +647,8 @@ Item {
                             font.pixelSize: 11
                             color: Theme.textMuted
                             opacity: 0.6
+                            readOnly: true
+                            selectByMouse: true
                         }
                     }
                 }

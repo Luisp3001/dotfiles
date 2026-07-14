@@ -314,6 +314,9 @@ ShellRoot {
         function launchScreenshot(): void {
             shell.screenshotActive = true;
         }
+        function lockscreen(): void { 
+            Quickshell.execDetached(["qs", "-p", Quickshell.env("HOME") + "/.config/quickshell/components/Lock.qml"]);
+        }
     }
 
     // Instanciamos los elementos por cada pantalla disponible

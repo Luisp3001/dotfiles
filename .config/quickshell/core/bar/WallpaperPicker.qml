@@ -27,6 +27,11 @@ Item {
         }
     }
 
+    property var watcherProcess: Process {
+        command: ["bash", Quickshell.env("HOME") + "/.config/quickshell/core/bar/wallpaper_watcher.sh"]
+        running: true
+    }
+
     property var loadTagsProcess: Process {
         command: ["cat", Quickshell.env("HOME") + "/.cache/wallpaper/tags.json"]
         running: false
@@ -53,7 +58,7 @@ Item {
 
     property string targetWallName: ""
     property var currentWallProcess: Process {
-        command: ["bash", "-c", "awww query | grep 'currently displaying' | sed -E 's/.*image: (.*)/\\1/' | head -n 1 || true"]
+        command: ["bash", "-c", "awww query | sed -n 's/.*image://p' | head -n 1 || true"]
         running: true
         stdout: SplitParser {
             onRead: (data) => {
