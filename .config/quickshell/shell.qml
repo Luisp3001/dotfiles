@@ -40,6 +40,7 @@ ShellRoot {
     property bool airdropOpen: false
     property bool pluginInstallOpen: false
     property bool commandApprovalOpen: false
+    property bool commandApprovalRunning: false
     property var activeDynamicWidget: null
 
     // ── Minerva Command Approval State ──────────────────────────────────
@@ -53,6 +54,7 @@ ShellRoot {
     
     // Propiedad derivada que centraliza si la isla está expandida por CUALQUIER motivo (incluyendo futuros plugins dinámicos)
     property bool isIslandExpanded: launcherOpen || notifOpen || wallpaperOpen || airdropOpen || pluginInstallOpen || commandApprovalOpen || activeDynamicWidget !== null
+    property bool islandBlocksInput: isIslandExpanded && !commandApprovalRunning
 
     // Función para cerrar cualquier panel/widget abierto
     function closeIsland() {
@@ -341,7 +343,7 @@ ShellRoot {
             property var dismissOverlay: PanelWindow {
                 screen: modelData
                 anchors { top: true; bottom: true; left: true; right: true }
-                visible: shell.isIslandExpanded
+                visible: shell.islandBlocksInput
                 color: "transparent"
                 WlrLayershell.layer: WlrLayer.Top
                 WlrLayershell.exclusionMode: WlrLayershell.Ignore
@@ -361,7 +363,7 @@ ShellRoot {
                 color: "transparent"
                 WlrLayershell.layer: WlrLayer.Top
                 WlrLayershell.exclusionMode: WlrLayershell.Exclusive
-                WlrLayershell.keyboardFocus: shell.isIslandExpanded ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
+                WlrLayershell.keyboardFocus: shell.islandBlocksInput ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
 
                 // La magia: solo la región del 'bar' aceptará eventos, el resto pasará de largo (o caerá en dismissOverlay si está abierto)
                 mask: Region {

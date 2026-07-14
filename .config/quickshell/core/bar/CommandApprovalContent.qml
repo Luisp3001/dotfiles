@@ -19,6 +19,11 @@ Item {
 
     // State: confirm | running | success | error
     property string approvalState: "confirm"
+    onApprovalStateChanged: {
+        if (shellRoot) {
+            shellRoot.commandApprovalRunning = (approvalState === "running")
+        }
+    }
     property string errorMessage: ""
     property string resultOutput: ""
 

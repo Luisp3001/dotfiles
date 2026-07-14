@@ -9,6 +9,15 @@ local overview = "qs ipc call shell toggleOverview"
 local scripts = "~/.config/hypr/scripts_hypr/launcher.sh --script"
 local minerva = "qs ipc call minerva toggle_voice"
 local screenrec = '/home/luisp/.config/quickshell/optional/screenrec/wl_screenrec_ctl.sh open-selector -- --audio --audio-device "alsa_output.pci-0000_00_1f.3-platform-skl_hda_dsp_generic.HiFi__Headphones__sink.monitor"'
+local _zoom = 1.0
+local function set_zoom(delta)
+    return function()
+        _zoom = math.max(1.0, _zoom + delta)
+        hl.config({ cursor = { zoom_factor = _zoom } })
+    end
+end
+hl.bind(mainMod .. " + SHIFT + equal", set_zoom( 0.1), { repeating = true })
+hl.bind(mainMod .. " + SHIFT + minus",   set_zoom(-0.1), { repeating = true })
 
 hl.config({
     binds = {

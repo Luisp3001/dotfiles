@@ -4,7 +4,7 @@
     "showInIsland": false,
     "showCava": true,
     "showBeatAnimation": true,
-    "useGifInsteadOfVinyl": true
+    "useGifInsteadOfVinyl": false
   },
   "__tabOrder": [
     "com.luisp.spotify",
@@ -18,5 +18,11 @@
     "recordAudio": true,
     "fps": "30",
     "hideBarIcon": true
+  },
+  "com.luisp.minerva": {
+    "aiProvider": "Gemini",
+    "geminiModel": "gemini-3-flash-preview",
+    "geminiApiKey": "AQ.Ab8RN6JFm3kzaUEMAY7ahUCMCXUgO8Bo5CCkO4wcoAdQxdZ5NQ",
+    "aiThinking": true
   }
 }

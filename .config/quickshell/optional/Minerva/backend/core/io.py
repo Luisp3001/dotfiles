@@ -26,10 +26,18 @@ DESTRUCTIVE_RE = re.compile(
     r"|\bwipe\b"          # borrado de disco
     r"|\bmv\s+.*\s+/"     # mover a ruta absoluta
     r"|>\s*/(?!dev/null)" # redirigir a archivo del sistema
-    r"|>>\s*/",           # añadir a archivo del sistema
+    r"|>>\s*/"            # añadir a archivo del sistema
+    r"|\byay\s+-[SRU]"    # instalacion de AUR
+    r"|\bparu\s+-[SRU]",  # instalacion de AUR
     re.IGNORECASE
 )
-SUDO_RE = re.compile(r"\bsudo\b")
+SUDO_RE = re.compile(
+    r"\bsudo\b"
+    r"|\bpkexec\b"
+    r"|\bpacman\s+-[SRU][a-zA-Z]*\b"
+    r"|\bsystemctl\s+(start|stop|restart|enable|disable|daemon-reload)\b",
+    re.IGNORECASE
+)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

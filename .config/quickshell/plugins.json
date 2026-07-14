@@ -41,10 +41,10 @@
       "type": "window"
     },
     {
-      "id": "com.luisp.ollama_ai",
-      "path": "optional/ollama_ai",
+      "id": "com.luisp.minerva",
+      "path": "optional/Minerva",
       "enabled": true,
-      "name": "Ollama AI Assistant",
+      "name": "Minerva",
       "main": "Main.qml",
       "type": "widget"
     }
