@@ -47,9 +47,9 @@ Item {
             PowerCard {
                 icon: "󰌾"
                 label: "Lock"
-                sublabel: "hyprlock"
+                sublabel: "Locks-session"
                 cardColor: Theme.accent
-                onClicked: Quickshell.execDetached(["hyprlock"])
+                onClicked: Quickshell.execDetached(["loginctl", "lock-session"])
             }
 
             PowerCard {

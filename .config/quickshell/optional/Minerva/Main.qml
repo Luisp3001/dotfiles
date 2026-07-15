@@ -203,21 +203,13 @@ Item {
             case "sudo_required":
                 isThinking = false
                 _updateMinervaState()
-                // Abrir la notificación de aprobación en la barra
-                if (widget.shellRoot) {
-                    widget.shellRoot.minervaPendingCmd = msg.command || ""
-                    widget.shellRoot.minervaPendingIsSudo = (msg.type === "sudo_required")
-                    widget.shellRoot.minervaPendingReason = msg.reason || ""
-                    widget.shellRoot.commandApprovalOpen = true
+                // Expandir la isla si estaba cerrada para mostrar el overlay de confirmación del chat
+                if (widget.shellRoot && widget.shellRoot.activeDynamicWidget !== widget) {
+                    widget.shellRoot.activeDynamicWidget = widget
                 }
                 break
             case "command_result":
-                // Actualizar el estado de la barra de aprobación si está abierta
-                if (widget.shellRoot && widget.shellRoot.commandApprovalOpen) {
-                    widget.shellRoot.minervaCommandSuccess = (msg.success !== false)
-                    widget.shellRoot.minervaCommandOutput = msg.output || ""
-                    widget.shellRoot.minervaCommandResultReceived()
-                }
+                // Resultado manejado internamente por ChatWidget
                 break
             case "wake_word_detected":
                 if (!isRecording) {

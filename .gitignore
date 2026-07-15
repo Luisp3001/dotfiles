@@ -1,3 +1,5 @@
 .config/quickshell/Caelestia
 .config/quickshell/shell/plugin/build
+.config/quickshell/plugin_settings.json
+__pycache__
 .venv
