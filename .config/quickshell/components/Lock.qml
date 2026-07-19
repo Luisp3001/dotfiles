@@ -69,6 +69,7 @@ ShellRoot {
     property color blue:     walColors.colors.color4
     property color green:    walColors.colors.color2
     property color crust:    Qt.darker(base, 1.2)
+    property color fpGreen:  "#10B981" // Hardcoded vibrant green for fingerprint
 
     // Shared state across all monitors
     QtObject {
@@ -76,6 +77,7 @@ ShellRoot {
         property bool failed: false
         property bool authenticating: false
         property string statusText: "Locked"
+        property bool waitingForFingerprint: false
     }
 
 
@@ -83,19 +85,42 @@ ShellRoot {
     // System Authentication hook
     PamContext {
         id: pam
-        
-        Component.onCompleted: pam.start()
+        config: "sddm"
+
+        onMessageChanged: {
+            if (pam.message && pam.message.length > 0) {
+                if (!pam.responseRequired || pam.message.toLowerCase().indexOf("finger") !== -1) {
+                    lockUI.waitingForFingerprint = true;
+                    if (inputField.text.length === 0) {
+                        lockUI.statusText = pam.message;
+                    }
+                } else {
+                    lockUI.waitingForFingerprint = false;
+                }
+            } else {
+                lockUI.waitingForFingerprint = false;
+                if (!lockUI.failed && !lockUI.authenticating && inputField.text.length === 0) {
+                    lockUI.statusText = "Locked";
+                }
+            }
+        }
 
         onCompleted: (result) => {
             lockUI.authenticating = false;
+            lockUI.waitingForFingerprint = false;
             if (result === PamResult.Success) {
                 rootLock.locked = false;
                 Quickshell.execDetached(["bash", "-c", "pgrep -x hypridle || hypridle &"])
                 Qt.quit();
             } else {
-                lockUI.failed = true;
-                lockUI.statusText = "Access Denied";
-                pam.start();
+                if (screenRoot.inputActive) {
+                    lockUI.failed = true;
+                    lockUI.statusText = "Access Denied";
+                    pam.start();
+                } else {
+                    lockUI.failed = false;
+                    lockUI.statusText = "Locked";
+                }
             }
         }
     }
@@ -162,6 +187,14 @@ ShellRoot {
                 property bool powerMenuOpen: false
                 property bool inputActive: false 
                 property bool isPlayingIntro: true
+                
+                onInputActiveChanged: {
+                    if (inputActive) {
+                        if (!pam.active) pam.start();
+                    } else {
+                        if (pam.active) pam.abort();
+                    }
+                }
                 
                 Component.onCompleted: {
                     introSequence.start();
@@ -482,10 +515,31 @@ ShellRoot {
                             }
 
                             Rectangle {
+                                id: fpPulseRing
                                 anchors.fill: parent
                                 radius: height / 2
                                 color: "transparent"
-                                border.color: lockUI.failed ? root.red : (lockUI.authenticating ? root.peach : Qt.rgba(root.text.r, root.text.g, root.text.b, 0.5))
+                                border.color: root.fpGreen
+                                border.width: Math.max(1, 2 * screenRoot.sc)
+                                opacity: 0
+                                scale: 1.0
+                                
+                                SequentialAnimation {
+                                    id: fpPulseAnim
+                                    running: lockUI.waitingForFingerprint
+                                    loops: Animation.Infinite
+                                    ParallelAnimation {
+                                        NumberAnimation { target: fpPulseRing; property: "scale"; from: 1.0; to: 1.3; duration: 1500; easing.type: Easing.OutSine }
+                                        NumberAnimation { target: fpPulseRing; property: "opacity"; from: 0.8; to: 0.0; duration: 1500; easing.type: Easing.OutSine }
+                                    }
+                                }
+                            }
+
+                            Rectangle {
+                                anchors.fill: parent
+                                radius: height / 2
+                                color: "transparent"
+                                border.color: lockUI.failed ? root.red : (lockUI.authenticating ? root.peach : (lockUI.waitingForFingerprint ? root.fpGreen : Qt.rgba(root.text.r, root.text.g, root.text.b, 0.5)))
                                 border.width: Math.max(1, 3 * screenRoot.sc)
                                 Behavior on border.color { ColorAnimation { duration: 300 } }
                             }
@@ -518,22 +572,24 @@ ShellRoot {
                                         ? Qt.rgba(root.red.r,   root.red.g,   root.red.b,   0.2)
                                         : (lockUI.authenticating
                                             ? Qt.rgba(root.peach.r, root.peach.g, root.peach.b, 0.2)
-                                            : Qt.rgba(root.mauve.r, root.mauve.g, root.mauve.b, 0.15))
+                                            : (lockUI.waitingForFingerprint 
+                                                ? Qt.rgba(root.fpGreen.r, root.fpGreen.g, root.fpGreen.b, 0.2)
+                                                : Qt.rgba(root.mauve.r, root.mauve.g, root.mauve.b, 0.15)))
                                     border.color: lockUI.failed
                                         ? root.red
-                                        : (lockUI.authenticating ? root.peach : root.mauve)
+                                        : (lockUI.authenticating ? root.peach : (lockUI.waitingForFingerprint ? root.fpGreen : root.mauve))
                                     border.width: Math.max(1, 1 * screenRoot.sc)
                                     Behavior on color { ColorAnimation { duration: 300 } }
                                     Behavior on border.color { ColorAnimation { duration: 300 } }
 
                                     Text {
                                         anchors.centerIn: parent
-                                        text: lockUI.failed ? "󰌾" : (lockUI.authenticating ? "󰌿" : "󰌾")
+                                        text: lockUI.failed ? "󰌾" : (lockUI.authenticating ? "󰌿" : (lockUI.waitingForFingerprint ? "󰟾" : "󰌾"))
                                         font.family: "Iosevka Nerd Font"
                                         font.pixelSize: 18 * screenRoot.sc
                                         color: lockUI.failed
                                             ? root.red
-                                            : (lockUI.authenticating ? root.peach : root.mauve)
+                                            : (lockUI.authenticating ? root.peach : (lockUI.waitingForFingerprint ? root.fpGreen : root.mauve))
                                         Behavior on color { ColorAnimation { duration: 300 } }
                                     }
                                 }
@@ -545,7 +601,7 @@ ShellRoot {
                                     font.letterSpacing: 2.0
                                     color: lockUI.failed
                                         ? root.red
-                                        : (lockUI.authenticating ? root.peach : root.text)
+                                        : (lockUI.authenticating ? root.peach : (lockUI.waitingForFingerprint ? root.fpGreen : root.text))
                                     text: lockUI.statusText.toUpperCase()
                                     Behavior on color { ColorAnimation { duration: 300 } }
                                 }
@@ -663,7 +719,9 @@ ShellRoot {
                                             lockUI.failed = false;
                                             lockUI.statusText = "Enter PIN";
                                         } else {
-                                            if (!lockUI.failed) lockUI.statusText = "Locked";
+                                            if (!lockUI.failed) {
+                                                lockUI.statusText = lockUI.waitingForFingerprint && pam.message ? pam.message : "Locked";
+                                            }
                                         }
                                     }
                                 }

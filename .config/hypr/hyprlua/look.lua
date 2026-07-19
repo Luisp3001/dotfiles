@@ -10,6 +10,8 @@ local function check_power()
     return true
 end
 
+local is_on_ac = check_power()
+
 hl.config({
     general = {
         gaps_in = 10,
@@ -28,19 +30,20 @@ hl.config({
 
     decoration = {
         active_opacity = 1,
-        rounding = 12,
-        rounding_power = 3,
+        -- Si está en AC (corriente), usa los valores originales, si no (batería), usa valores reducidos.
+        rounding = is_on_ac and 12 or 5,
+        rounding_power = is_on_ac and 3 or 2,
 
         blur = {
+            size = is_on_ac and 10 or 3,
+            passes = is_on_ac and 2 or 1,
             enabled = true,
-            size = 10,
-            passes = 2,
             new_optimizations = true,
             ignore_opacity = false,
         },
 
         shadow = {
-            enabled = true,
+            enabled = is_on_ac,
             range = 30,
             render_power = 2,
             offset = { 3, 3 },
@@ -50,7 +53,7 @@ hl.config({
     },
 
     animations = {
-        enabled = check_power()
+        enabled = is_on_ac
     },
 
     dwindle = {

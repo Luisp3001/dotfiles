@@ -49,7 +49,10 @@ Item {
                 label: "Lock"
                 sublabel: "Locks-session"
                 cardColor: Theme.accent
-                onClicked: Quickshell.execDetached(["loginctl", "lock-session"])
+                onClicked: {
+                    if (root.shellRoot) root.shellRoot.closeIsland();
+                    Quickshell.execDetached(["loginctl", "lock-session"]);
+                }
             }
 
             PowerCard {
@@ -65,7 +68,10 @@ Item {
                 label: "Suspend"
                 sublabel: "sleep"
                 cardColor: Theme.accent
-                onClicked: Quickshell.execDetached(["systemctl", "suspend"])
+                onClicked: {
+                    if (root.shellRoot) root.shellRoot.closeIsland();
+                    Quickshell.execDetached(["sh", "-c", "loginctl lock-session; sleep 1 ;systemctl suspend"]);
+                }
             }
         }
 

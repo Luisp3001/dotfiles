@@ -65,7 +65,7 @@ Item {
                 let text = data.trim();
                 let parts = text.split('/');
                 let name = parts[parts.length - 1];
-                if (name && name !== "black.jpg") {
+                if (name || name !== "black.jpg") {
                     root.targetWallName = name;
                     root.tryFocus();
                 }
