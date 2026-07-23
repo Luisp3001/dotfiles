@@ -56,6 +56,7 @@ from backend.core.memory        import memory_collection, MEMORY_AVAILABLE, get_
 from backend.core.ollama_engine import do_chat
 from backend.core.gemini_engine import do_chat_gemini
 from backend.tools              import SYSTEM_PROMPT
+from backend.core.tasks_db      import get_pending_tasks
 
 # Importaciones opcionales de voz para el handler de toggle_voice
 if VOICE_AVAILABLE:
@@ -127,20 +128,56 @@ def _dispatch_chat(history: list, settings: dict) -> None:
         do_chat(history, model=req_model, temperature=req_temp, num_ctx=req_ctx, thinking=req_think)
 
 
-def _run_command(cmd: str) -> tuple[str, int]:
-    """Ejecuta un comando bash y retorna (output, returncode)."""
-    try:
-        r = subprocess.run(
-            ["bash", "-c", cmd],
-            capture_output=True, text=True, timeout=30,
-            cwd=HOME, env={**os.environ}
-        )
-        out = (r.stdout + r.stderr).strip()
-        return out[:4096] or "(sin salida)", r.returncode
-    except subprocess.TimeoutExpired:
-        return "Tiempo de espera agotado (30s)", -1
-    except Exception as e:
-        return str(e), -1
+def _run_command_async(cmd: str, is_sudo: bool) -> None:
+    """Ejecuta un comando en un hilo y encola los resultados y salidas parciales."""
+    def worker():
+        try:
+            if is_sudo:
+                command_args = ["pkexec", "bash", "-c", cmd]
+                display_cmd = f"sudo {cmd}"
+            else:
+                command_args = ["bash", "-c", cmd]
+                display_cmd = cmd
+
+            process = subprocess.Popen(
+                command_args,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                cwd=HOME,
+                env={**os.environ}
+            )
+
+            full_output = []
+            if process.stdout:
+                for line in process.stdout:
+                    full_output.append(line)
+                    emit({"type": "command_output", "command": display_cmd, "text": line})
+                
+            process.wait()
+            returncode = process.returncode
+            out_str = "".join(full_output).strip()
+            truncated_out = out_str[:4096] or "(sin salida)"
+            
+            msg_queue.put(json.dumps({
+                "type": "_internal_cmd_done",
+                "command": display_cmd,
+                "output": truncated_out,
+                "returncode": returncode,
+                "success": returncode == 0
+            }))
+
+        except Exception as e:
+            msg_queue.put(json.dumps({
+                "type": "_internal_cmd_done",
+                "command": f"sudo {cmd}" if is_sudo else cmd,
+                "output": str(e),
+                "returncode": -1,
+                "success": False
+            }))
+
+    threading.Thread(target=worker, daemon=True).start()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -155,7 +192,32 @@ def main():
             pass
         os._exit(0)
 
+    # Worker para proactividad de tareas
+    def _tasks_worker():
+        import time
+        from datetime import datetime, timedelta
+        while True:
+            try:
+                # Polling cada 3 minutos
+                time.sleep(180)
+                pending = get_pending_tasks()
+                if pending:
+                    urgent = False
+                    now = datetime.now()
+                    for t in pending:
+                        if t.get("due_date"):
+                            # Si vence en menos de 24h o ya venció
+                            if (t["due_date"] - now) < timedelta(hours=24):
+                                urgent = True
+                                break
+                    emit({"type": "tasks_pending", "urgent": urgent})
+                else:
+                    emit({"type": "tasks_cleared"})
+            except Exception as e:
+                pass # Ignorar fallos de db en background
+
     threading.Thread(target=_monitor_stdin, daemon=True).start()
+    threading.Thread(target=_tasks_worker, daemon=True).start()
 
     emit({"type": "ready", "model": MODEL, "home": HOME})
 
@@ -195,6 +257,15 @@ def main():
             if memories:
                 system_prompt_with_date += f"\n\n## Recuerdos relevantes a largo plazo:\n- {memories}"
 
+            # Inyectar tareas pendientes proactivamente
+            try:
+                pending = get_pending_tasks()
+                if pending:
+                    tasks_str = "\n".join([f"- [ID: {t['id']}] {t['description']} (Vence: {t['due_date'] if t.get('due_date') else 'N/A'})" for t in pending])
+                    system_prompt_with_date += f"\n\n## Tareas pendientes del usuario:\n{tasks_str}\n\n(Puedes mencionar estas tareas de forma casual si es un momento oportuno o si el usuario te pregunta. NO las repitas en cada mensaje, solo cuando aporte valor)."
+            except Exception as e:
+                pass # Silencioso si falla la db
+
             current_history = [{"role": "system", "content": system_prompt_with_date}]
             current_history.extend(hist)
             
@@ -216,49 +287,31 @@ def main():
             cmd = msg.get("command", "").strip()
             if not cmd:
                 continue
-            out, returncode = _run_command(cmd)
-            emit({
-                "type":       "command_result",
-                "command":    cmd,
-                "output":     out,
-                "returncode": returncode,
-                "success":    returncode == 0
-            })
-            # Retomar conversación con el resultado de la tool
-            if current_history and current_history[-1].get("tool_calls"):
-                t_id = current_history[-1]["tool_calls"][-1].get("id", "")
-                current_history.append({
-                    "role": "tool", "tool_call_id": t_id,
-                    "name": "run_command", "content": out
-                })
-                _dispatch_chat(current_history, current_settings)
+            emit({"type": "command_start", "command": cmd})
+            _run_command_async(cmd, is_sudo=False)
 
         # ── Comando sudo via pkexec ───────────────────────────────────────────
         elif msg_type == "run_sudo":
             cmd = msg.get("command", "").strip()
             if not cmd:
                 continue
-            try:
-                r = subprocess.run(
-                    ["pkexec", "bash", "-c", cmd],
-                    capture_output=True, text=True, timeout=30,
-                    cwd=HOME, env={**os.environ}
-                )
-                out         = (r.stdout + r.stderr).strip()
-                returncode  = r.returncode
-            except subprocess.TimeoutExpired:
-                out, returncode = "Tiempo de espera agotado (30s)", -1
-            except Exception as e:
-                out, returncode = str(e), -1
+            emit({"type": "command_start", "command": f"sudo {cmd}"})
+            _run_command_async(cmd, is_sudo=True)
 
-            out = out[:4096] or "(sin salida)"
+        # ── Comando completado (evento interno) ───────────────────────────────
+        elif msg_type == "_internal_cmd_done":
+            cmd = msg.get("command", "")
+            out = msg.get("output", "")
+            returncode = msg.get("returncode", -1)
+            success = msg.get("success", False)
             emit({
                 "type":       "command_result",
-                "command":    f"sudo {cmd}",
+                "command":    cmd,
                 "output":     out,
                 "returncode": returncode,
-                "success":    returncode == 0
+                "success":    success
             })
+            # Retomar conversación con el resultado de la tool
             if current_history and current_history[-1].get("tool_calls"):
                 t_id = current_history[-1]["tool_calls"][-1].get("id", "")
                 current_history.append({

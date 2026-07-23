@@ -43,6 +43,9 @@ Item {
                     cmdStatus: "running", needsConfirm: false, needsSudo: false, isSystem: false
                 })
                 scrollToBottom()
+                if (root.aiWidget && msg.command) {
+                    root.aiWidget.confirmRun(msg.command)
+                }
                 break
             case "confirm_required":
                 addCmdCard(msg.command || "", true, false)
@@ -64,8 +67,7 @@ Item {
                     aiWidget.showConfirm = true
                 }
                 break
-            case "command_result":
-                // Marcar la tarjeta de comando como completada para detener spinner
+            case "command_start":
                 for (var ci = aiWidget.msgModel.count - 1; ci >= 0; ci--) {
                     var citem = aiWidget.msgModel.get(ci)
                     if (citem.role === "command" && citem.cmdStatus === "running") {
@@ -73,7 +75,38 @@ Item {
                         break
                     }
                 }
-                addResultCard(msg.command || "", msg.output || "", msg.success !== false)
+                addResultCard(msg.command || "", "", "running")
+                break
+            case "command_output":
+                for (var ri = aiWidget.msgModel.count - 1; ri >= 0; ri--) {
+                    var ritem = aiWidget.msgModel.get(ri)
+                    if (ritem.role === "result" && ritem.cmdStatus === "running") {
+                        aiWidget.msgModel.setProperty(ri, "content", ritem.content + (msg.text || ""))
+                        break
+                    }
+                }
+                scrollToBottom()
+                break
+            case "command_result":
+                var found = false
+                for (var resi = aiWidget.msgModel.count - 1; resi >= 0; resi--) {
+                    var resitem = aiWidget.msgModel.get(resi)
+                    if (resitem.role === "result" && resitem.cmdStatus === "running") {
+                        aiWidget.msgModel.setProperty(resi, "cmdStatus", (msg.success !== false) ? "success" : "error")
+                        found = true
+                        break
+                    }
+                }
+                if (!found) {
+                    for (var cix = aiWidget.msgModel.count - 1; cix >= 0; cix--) {
+                        var citemx = aiWidget.msgModel.get(cix)
+                        if (citemx.role === "command" && citemx.cmdStatus === "running") {
+                            aiWidget.msgModel.setProperty(cix, "cmdStatus", "done")
+                            break
+                        }
+                    }
+                    addResultCard(msg.command || "", msg.output || "", (msg.success !== false) ? "success" : "error")
+                }
                 break
             case "error":
                 if (aiWidget.streamingIdx >= 0) {
@@ -137,10 +170,10 @@ Item {
         scrollToBottom()
     }
 
-    function addResultCard(cmd, output, success) {
+    function addResultCard(cmd, output, status) {
         aiWidget.msgModel.append({
             role: "result", content: output, command: cmd,
-            cmdStatus: success ? "success" : "error",
+            cmdStatus: status,
             needsConfirm: false, needsSudo: false, isSystem: false
         })
         scrollToBottom()
@@ -397,14 +430,18 @@ Item {
                             color: model.role === "result"
                                 ? (model.cmdStatus === "success"
                                    ? Qt.rgba(0.08, 0.28, 0.08, 0.55)
-                                   : Qt.rgba(0.32, 0.07, 0.07, 0.55))
+                                   : model.cmdStatus === "error"
+                                     ? Qt.rgba(0.32, 0.07, 0.07, 0.55)
+                                     : Qt.rgba(0.08, 0.15, 0.32, 0.55))
                                 : Qt.rgba(1, 1, 1, 0.04)
 
                             border.width: 1
                             border.color: model.role === "result"
                                 ? (model.cmdStatus === "success"
                                    ? Qt.rgba(0.3, 0.7, 0.3, 0.3)
-                                   : Qt.rgba(0.8, 0.3, 0.3, 0.3))
+                                   : model.cmdStatus === "error"
+                                     ? Qt.rgba(0.8, 0.3, 0.3, 0.3)
+                                     : Qt.rgba(0.3, 0.5, 0.8, 0.3))
                                 : (model.needsConfirm || model.needsSudo)
                                   ? Qt.rgba(0.95, 0.65, 0.22, 0.45)
                                   : Qt.rgba(1, 1, 1, 0.09)
@@ -421,21 +458,29 @@ Item {
                                 Row {
                                     spacing: 6
                                     Text {
+                                        id: resultIcon
                                         text: model.role === "result"
-                                            ? (model.cmdStatus === "success" ? "󰄬" : "󰅖")
+                                            ? (model.cmdStatus === "success" ? "󰄬" : model.cmdStatus === "error" ? "󰅖" : "󰔟")
                                             : model.needsSudo ? "󰌞"
                                             : model.needsConfirm ? "󰀦"
                                             : "󰆍"
                                         font.family: Theme.fontMono
                                         font.pixelSize: 13
                                         color: model.role === "result"
-                                            ? (model.cmdStatus === "success" ? Theme.success : Theme.danger)
+                                            ? (model.cmdStatus === "success" ? Theme.success : model.cmdStatus === "error" ? Theme.danger : Theme.accent)
                                             : (model.needsSudo || model.needsConfirm)
                                               ? Theme.warning : Theme.accent
                                         anchors.verticalCenter: parent.verticalCenter
+                                        
+                                        SequentialAnimation on rotation {
+                                            running: model.role === "result" && model.cmdStatus === "running"
+                                            loops: Animation.Infinite
+                                            NumberAnimation { to: 360; duration: 900; easing.type: Easing.Linear }
+                                            onStopped: resultIcon.rotation = 0
+                                        }
                                     }
                                     Text {
-                                        text: model.role === "result" ? "Resultado"
+                                        text: model.role === "result" ? (model.cmdStatus === "running" ? "Ejecutando..." : "Resultado")
                                             : model.needsSudo ? "Requiere sudo (pkexec)"
                                             : model.needsConfirm ? "Confirmar antes de ejecutar"
                                             : "Ejecutar comando"

@@ -163,6 +163,8 @@ Item {
         isTranscribing: root.minervaState === "transcribing"
         isThinking:     root.minervaState === "thinking"
         isSpeaking:     root.minervaState === "speaking"
+        isPendingTask:  root.minervaState === "pending_task"
+        isUrgentTask:   root.minervaState === "urgent_task"
 
         // Métricas de audio en tiempo real → shader uniforms
         audioRms:   shellRoot ? shellRoot.audioRms   : 0.0

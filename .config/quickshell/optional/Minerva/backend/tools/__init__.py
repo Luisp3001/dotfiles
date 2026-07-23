@@ -18,6 +18,7 @@ from .system        import tool_web_search, tool_launch_app
 from .spotify       import tool_spotify_music
 from .memory_tool   import tool_memorize_fact
 from .screen        import tool_capture_screen, ScreenCapture
+from .tasks         import tool_manage_tasks
 from ..core.memory  import chroma_client, CHROMADB_AVAILABLE
 from ..core.io      import classify_cmd, emit
 from ..core.config  import HOME
@@ -138,30 +139,17 @@ def dispatch_tool(tool_name: str, args: dict) -> "str | _RunCommandPending":
             })
             return RUN_COMMAND_PENDING
         else:
-            # Comandos safe: ejecutar directamente sin esperar confirmación
+            # Comandos safe: ejecutar directamente delegando a QML para auto-confirm
             emit({"type": "run_command", "command": cmd})
-            try:
-                import subprocess as _sp
-                r = _sp.run(
-                    ["bash", "-c", cmd],
-                    capture_output=True, text=True, timeout=30,
-                    cwd=HOME, env={**__import__("os").environ}
-                )
-                out = (r.stdout + r.stderr).strip()
-                out = out[:4096] or "(sin salida)"
-                returncode = r.returncode
-            except _sp.TimeoutExpired:
-                out, returncode = "Tiempo de espera agotado (30s)", -1
-            except Exception as e:
-                out, returncode = str(e), -1
-            emit({
-                "type":       "command_result",
-                "command":    cmd,
-                "output":     out,
-                "returncode": returncode,
-                "success":    returncode == 0
-            })
-            return out
+            return RUN_COMMAND_PENDING
+
+    elif tool_name == "manage_tasks":
+        return tool_manage_tasks(
+            action      = args.get("action", ""),
+            description = args.get("description", ""),
+            task_id     = args.get("task_id"),
+            due_date    = args.get("due_date")
+        )
 
     elif tool_name == "capture_screen":
         result = tool_capture_screen(output=args.get("output", ""))

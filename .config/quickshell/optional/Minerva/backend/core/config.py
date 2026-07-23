@@ -7,6 +7,10 @@ Todas las constantes y flags de disponibilidad de dependencias opcionales.
 import os
 import pathlib
 import sys
+from dotenv import load_dotenv
+
+# Cargar variables de entorno desde .env
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Configuración base

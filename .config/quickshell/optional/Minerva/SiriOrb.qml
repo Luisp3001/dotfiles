@@ -14,6 +14,9 @@ Item {
     property bool isTranscribing: false
     property bool isThinking: false
     property bool isSpeaking: false
+    
+    property bool isPendingTask: false
+    property bool isUrgentTask: false
 
     // ── Datos de audio en tiempo real (alimentados por el backend) ─────
     property real audioRms:   0.0
@@ -49,8 +52,18 @@ Item {
             PropertyChanges { target: root; stateAmplitude: 0.45; stateSpeed: 2.1; stateOpacity: 1.0 }
         },
         State {
+            name: "pending_task"
+            when: root.isPendingTask
+            PropertyChanges { target: root; stateAmplitude: 0.15; stateSpeed: 0.8; stateOpacity: 0.7 }
+        },
+        State {
+            name: "urgent_task"
+            when: root.isUrgentTask
+            PropertyChanges { target: root; stateAmplitude: 0.35; stateSpeed: 2.8; stateOpacity: 1.0 }
+        },
+        State {
             name: "idle"
-            when: !root.isRecording && !root.isThinking && !root.isSpeaking && !root.isTranscribing
+            when: !root.isRecording && !root.isThinking && !root.isSpeaking && !root.isTranscribing && !root.isPendingTask && !root.isUrgentTask
             PropertyChanges { target: root; stateAmplitude: 0.10; stateSpeed: 0.65; stateOpacity: 0.55 }
         }
     ]
@@ -93,5 +106,22 @@ Item {
         property real u_height:    height
 
         fragmentShader: "shaders/siri_orb.frag.qsb"
+    }
+
+    // Overlay rojo parpadeante para tareas urgentes
+    Rectangle {
+        anchors.fill: parent
+        radius: width / 2
+        color: "#ff3333"
+        opacity: root.isUrgentTask ? 0.35 : 0.0
+        visible: opacity > 0
+        Behavior on opacity { NumberAnimation { duration: 400 } }
+
+        SequentialAnimation on opacity {
+            running: root.isUrgentTask
+            loops: Animation.Infinite
+            NumberAnimation { to: 0.6; duration: 400; easing.type: Easing.InOutSine }
+            NumberAnimation { to: 0.1; duration: 400; easing.type: Easing.InOutSine }
+        }
     }
 }

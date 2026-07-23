@@ -69,8 +69,20 @@ Item {
     property bool   backendReady:  false
     property bool   isThinking:    false
     property bool   isSpeaking:    false
+    property bool   hasPendingTasks: false
+    property bool   hasUrgentTasks: false
+    property bool   showPendingOrb: false
     property string lastAISnippet: "Minerva"
-    property string modelName: aiModel
+    property string modelName: aiProvider === "Gemini" ? geminiModel : aiModel
+    
+    Timer {
+        id: pendingOrbTimer
+        interval: 20000 // Mostrar el orbe central por 20 segundos
+        onTriggered: {
+            widget.showPendingOrb = false
+            widget._updateMinervaState()
+        }
+    }
 
     // ── Estado de la UI persistente ───────────────────────────────────────
     property var    conversationHistory: []
@@ -160,18 +172,33 @@ Item {
     // ── Helpers para actualizar estado global de voz ───────────────────────
     function _updateMinervaState() {
         if (!widget.shellRoot) return
-        var active = widget.isRecording || widget.isTranscribing || widget.isThinking || widget.isSpeaking
+        var active = widget.isRecording || widget.isTranscribing || widget.isThinking || widget.isSpeaking || widget.showPendingOrb
         widget.shellRoot.minervaActive = active
         if (widget.isRecording)         widget.shellRoot.minervaState = "recording"
         else if (widget.isTranscribing) widget.shellRoot.minervaState = "transcribing"
         else if (widget.isThinking)     widget.shellRoot.minervaState = "thinking"
         else if (widget.isSpeaking)     widget.shellRoot.minervaState = "speaking"
+        else if (widget.showPendingOrb) widget.shellRoot.minervaState = widget.hasUrgentTasks ? "urgent_task" : "pending_task"
         else                            widget.shellRoot.minervaState = "idle"
     }
 
     function onBackendLine(msg) {
         // Actualizar estado del widget
         switch (msg.type) {
+            case "tasks_pending":
+                hasPendingTasks = true
+                hasUrgentTasks = !!msg.urgent
+                showPendingOrb = true
+                pendingOrbTimer.restart()
+                _updateMinervaState()
+                break
+            case "tasks_cleared":
+                hasPendingTasks = false
+                hasUrgentTasks = false
+                showPendingOrb = false
+                pendingOrbTimer.stop()
+                _updateMinervaState()
+                break
             case "ready":
                 backendReady = true
                 break
@@ -348,20 +375,21 @@ Item {
             Text {
                 id: aiBarIcon
                 anchors.centerIn: parent
-                text: widget.isRecording ? "󰍬" : "󱜚"
+                text: widget.isRecording ? "󰍬" : (widget.hasPendingTasks ? "󱜚" : "󱜚")
                 font.family: Theme.fontMono
                 font.pixelSize: 16
                 color: !widget.backendReady ? Theme.danger
                      : widget.isRecording ? Theme.danger
-                     : widget.isThinking   ? Theme.accent
-                     :                       Theme.textMuted
+                     : widget.isThinking  ? Theme.accent
+                     : widget.hasPendingTasks ? Theme.warning
+                     :                      Theme.textMuted
                 Behavior on color { ColorAnimation { duration: 300 } }
 
                 SequentialAnimation on opacity {
-                    running: widget.isThinking || widget.isRecording
+                    running: widget.isThinking || widget.isRecording || (widget.hasPendingTasks && !widget.isThinking && !widget.isRecording)
                     loops:   Animation.Infinite
-                    NumberAnimation { to: 0.25; duration: 700; easing.type: Easing.InOutSine }
-                    NumberAnimation { to: 1.0;  duration: 700; easing.type: Easing.InOutSine }
+                    NumberAnimation { to: widget.hasPendingTasks && !widget.isThinking && !widget.isRecording ? 0.6 : 0.25; duration: 1000; easing.type: Easing.InOutSine }
+                    NumberAnimation { to: 1.0;  duration: 1000; easing.type: Easing.InOutSine }
                     onStopped: aiBarIcon.opacity = 1.0
                 }
             }
@@ -405,11 +433,11 @@ Item {
 
                 Text {
                     anchors.verticalCenter: parent.verticalCenter
-                    text: !widget.backendReady ? "Iniciando Minerva…" : "Minerva"
+                    text: !widget.backendReady ? "Iniciando Minerva…" : (widget.hasPendingTasks ? "Minerva (Tareas pendientes)" : "Minerva")
                     font.family: Theme.fontSans
                     font.pixelSize: 12
                     font.weight:    Font.DemiBold
-                    color: Theme.textPrimary
+                    color: widget.hasPendingTasks ? Theme.warning : Theme.textPrimary
                     elide: Text.ElideRight
                     width: Math.min(implicitWidth, 190)
                 }

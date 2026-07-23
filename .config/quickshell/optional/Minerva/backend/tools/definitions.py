@@ -52,6 +52,11 @@ SYSTEM_PROMPT = f"""Eres Minerva, una asistente inteligente integrada en el escr
   - "queue": Agregar una cancion a la cola. Usa "uri" o "query".
   - Si el usuario pide musica de un artista o cancion especifica, usa "play" con query directamente.
   - Requiere Spotify Premium para controles de reproduccion.
+- **Gestión de Tareas** (manage_tasks): Tienes acceso a una base de datos de tareas pendientes del usuario (PostgreSQL).
+  - "add": Para agregar una tarea. Requiere "description". (ej: "comprar leche"). Puedes enviar "due_date" si es para un momento específico (ej: "2026-07-23 15:00:00").
+  - "complete": Para marcarla como completada. Requiere "task_id".
+  - "list": Para listar las tareas pendientes.
+  - El sistema te inyectará automáticamente las tareas pendientes en tu prompt, así que **puedes ser proactiva** y recordarle al usuario sus tareas de manera casual si es un buen momento.
 
 ## Reglas de seguridad
 - Solo puedes acceder a archivos dentro de {HOME}
@@ -259,6 +264,36 @@ OLLAMA_TOOLS = [
                     }
                 },
                 "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "manage_tasks",
+            "description": "Gestiona la lista de tareas pendientes del usuario en la base de datos PostgreSQL. Permite añadir, listar y completar tareas.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "description": "La acción a realizar: 'add', 'complete', 'list'",
+                        "enum": ["add", "complete", "list"]
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Descripción de la tarea a añadir (solo para action 'add')"
+                    },
+                    "task_id": {
+                        "type": "integer",
+                        "description": "ID de la tarea a completar (solo para action 'complete')"
+                    },
+                    "due_date": {
+                        "type": "string",
+                        "description": "Fecha y hora límite de la tarea en formato YYYY-MM-DD HH:MM:SS (opcional, solo para 'add')"
+                    }
+                },
+                "required": ["action"]
             }
         }
     }
