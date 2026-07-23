@@ -2,5 +2,7 @@
 .config/quickshell/shell/plugin/build
 .config/quickshell/plugin_settings.json
 .config/quickshell/optional/Minerva/backend/core/__pycache__
+.config/quickshell/optional/Minerva/backend/tools/__pycache__
 .config/quickshell/optional/Minerva/__pycache__
 .venv
+.config/quickshell/optional/Minerva/backend/.env
