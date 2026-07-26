@@ -14,7 +14,7 @@ El nombre viene de la diosa romana de la sabiduría.
 - **Sistema de voz completo:** Wake word ("Minerva"), STT (Whisper), TTS (Piper) y detección de silencio.
 - **SiriOrb:** Visualización animada por GPU (fragment shader) que reacciona al audio en tiempo real con RMS y 4 bandas FFT.
 - **Memoria a largo plazo:** ChromaDB vectorial para recordar preferencias y contexto entre sesiones.
-- **Proactividad (Tareas):** Conexión a PostgreSQL para gestionar tareas con alertas visuales sutiles en el SiriOrb.
+- **Proactividad (Tareas):** Conexión a PostgreSQL para gestionar tareas con alertas visuales sutiles en el SiriOrb. Soporta **tareas recurrentes** (diaria, semanal, mensual, anual) con auto-renovación en segundo plano.
 - **Tool RAG:** Selección inteligente de herramientas relevantes vía embedding semántico para no saturar el contexto.
 - **Seguridad:** Clasificación automática de comandos (safe / destructive / sudo) con confirmación en la UI.
 - **Captura de pantalla:** Visión multimodal — Minerva puede ver tu pantalla y analizarla.
@@ -100,7 +100,16 @@ optional/Minerva/
     │   └── memory.py            # ChromaDB: cliente persistente
     │                            #   - Colección minerva_memory (memoria a largo plazo)
     │                            #   - get_memory_context() para inyección en system prompt
-    │   ├── tasks_db.py          # Conexión a PostgreSQL (CRUD de tareas)
+    │   ├── tasks_db.py          # Conexión a PostgreSQL (CRUD de tareas + recurrencia):
+    │                            #   - init_db(): crea tabla y agrega columnas recurrence/recurrence_day
+    │                            #   - add_task(): inserta tarea; si es recurrente y no tiene due_date,
+    │                            #     calcula automáticamente la primera ocurrencia futura
+    │                            #   - complete_task(): marca como completada
+    │                            #   - get_pending_tasks(): retorna pendientes con due_date y recurrencia
+    │                            #   - renew_recurring_tasks(): renueva tareas vencidas actualizando
+    │                            #     due_date a la próxima ocurrencia (UPDATE in-place, no INSERT)
+    │                            #   - _next_due_date(): calcula siguiente ocurrencia (daily/weekly/monthly/yearly)
+    │                            #   - _initial_due_date(): calcula primera ocurrencia para tareas nuevas
     │
     └── tools/                   # Herramientas que la IA puede invocar
         ├── __init__.py          # Exporta dispatch_tool() (despachador centralizado),
@@ -113,6 +122,9 @@ optional/Minerva/
         ├── screen.py            # capture_screen: grim → base64 → multimodal
         ├── memory_tool.py       # memorize_fact: guarda hechos en ChromaDB
         └── tasks.py             # manage_tasks: Gestiona tareas en PostgreSQL
+                                 #   - Acciones: add, complete, list
+                                 #   - Soporte de recurrence ('daily','weekly','monthly','yearly')
+                                 #     recurrence_day (día del mes o semana) y recurrence_month (mes del año)
 ```
 
 ---
@@ -232,7 +244,7 @@ Minerva tiene un pipeline de voz completo con tres subsistemas independientes:
 | `spotify_music`   | `tools/spotify.py`     | Control de Spotify (play, pause, search, queue, volume, etc.)    |
 | `capture_screen`  | `tools/screen.py`      | Captura la pantalla con grim → base64 → visión multimodal       |
 | `memorize_fact`   | `tools/memory_tool.py` | Guarda un hecho en la memoria permanente (ChromaDB)              |
-| `manage_tasks`    | `tools/tasks.py`       | Lee, crea, completa y modifica tareas en PostgreSQL              |
+| `manage_tasks`    | `tools/tasks.py`       | Lee, crea y completa tareas en PostgreSQL. Soporta tareas recurrentes con `recurrence` y `recurrence_day` |
 
 ---
 
@@ -241,9 +253,38 @@ Minerva tiene un pipeline de voz completo con tres subsistemas independientes:
 Minerva puede gestionar tus pendientes usando una base de datos PostgreSQL remota o local (configurada en `backend/.env`). Esto le permite funcionar como un asistente proactivo real:
 
 1. **Inyección de Contexto**: Al chatear, Minerva lee tus tareas pendientes y las inyecta en su `SYSTEM_PROMPT` para conocerlas y recordártelas de forma natural.
-2. **Worker en Segundo Plano**: Un hilo en `main.py` sondea la BD cada 3 minutos. Si tienes tareas pendientes, emite el evento `tasks_pending`.
-3. **Indicador Visual Silencioso**: QML captura el evento y muestra el SiriOrb en el centro de tu pantalla por 20 segundos y deja un pequeño aviso en el widget. Si una tarea vence en menos de 24 horas, el SiriOrb parpadea de color **rojo vibrante** para indicar urgencia.
-4. **Herramienta IA**: Minerva tiene la tool `manage_tasks` para añadir nuevas tareas, ponerles fecha de vencimiento (`due_date`) o marcarlas como completadas.
+2. **Worker en Segundo Plano**: Un hilo en `main.py` sondea la BD cada 3 minutos. Antes de consultar pendientes, llama a `renew_recurring_tasks()` para renovar automáticamente cualquier tarea recurrente vencida.
+3. **Indicador Visual Silencioso**: QML captura el evento y muestra el SiriOrb en el centro de tu pantalla por 20 segundos y deja un aviso en el widget. El orbe reacciona visualmente según el nivel de urgencia máximo con tinte de color en GPU y una animación de respiración/pulso: **Verde esmeralda** (baja urgencia, > 3 días), **Amarillo/Ámbar** (media urgencia, 1 a 3 días) o **Rojo vibrante parpadeante** (alta urgencia / vencida, < 24 horas).
+4. **Herramienta IA**: Minerva tiene la tool `manage_tasks` para añadir nuevas tareas, ponerles fecha de vencimiento (`due_date`) o marcarlas como completadas. `manage_tasks` está **siempre disponible** en el Tool RAG (se inyecta aunque el embedding semántico no la seleccione) para garantizar que la IA la use ante cualquier pregunta sobre fechas o cobros.
+
+### Tareas recurrentes
+
+Las tareas pueden repetirse automáticamente configurando dos campos adicionales:
+
+| Campo            | Tipo        | Descripción                                                                                  |
+|------------------|-------------|----------------------------------------------------------------------------------------------|
+| `recurrence`     | `VARCHAR(10)` | Frecuencia: `'daily'`, `'weekly'`, `'monthly'`, `'yearly'`. `NULL` = tarea única.          |
+| `recurrence_day` | `INTEGER`   | Día de anclaje. Para `monthly`/`yearly`: día del mes (1-31). Para `weekly`: día de semana (0=lun…6=dom). |
+| `recurrence_month` | `INTEGER` | Mes de anclaje (1-12). Solo usado para recurrencia `'yearly'` (ej. cumpleaños). |
+
+**Flujo de renovación:** El worker llama a `renew_recurring_tasks()` cada 3 minutos. Si una tarea recurrente tiene `due_date < NOW()`, se calcula la próxima ocurrencia con `_next_due_date()` y se hace un `UPDATE` in-place (`due_date = próxima, status = 'pending'`). Si el backend estuvo apagado varios ciclos, avanza en bucle hasta quedar en el futuro. No se crean filas nuevas: el historial no crece.
+
+**Primera ocurrencia:** Si se agrega una tarea recurrente sin `due_date` explícito, `add_task()` llama a `_initial_due_date()` para calcular la próxima ocurrencia futura antes de insertar. Ejemplo: si hoy es el 23 de julio y `recurrence='monthly', recurrence_day=11`, el `due_date` se fija automáticamente al `2026-08-11 08:00:00`.
+
+**Esquema de la tabla `minerva_tasks`:**
+
+```sql
+CREATE TABLE minerva_tasks (
+    id             SERIAL PRIMARY KEY,
+    description    TEXT          NOT NULL,
+    status         VARCHAR(20)   DEFAULT 'pending',  -- 'pending' | 'completed'
+    due_date       TIMESTAMP     NULL,
+    created_at       TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
+    recurrence       VARCHAR(10)   NULL,               -- 'daily' | 'weekly' | 'monthly' | 'yearly'
+    recurrence_day   INTEGER       NULL,               -- día de anclaje según recurrence
+    recurrence_month INTEGER       NULL                -- mes de anclaje (para yearly)
+);
+```
 
 ---
 
@@ -263,7 +304,7 @@ Minerva usa ChromaDB para dos propósitos:
 
 1. **Memoria a largo plazo** (colección `minerva_memory`): Almacena hechos, preferencias y contexto del usuario. Al inicio de cada chat, se consultan las memorias más relevantes semánticamente y se inyectan en el system prompt. La IA guarda nuevas memorias de forma proactiva cuando detecta información personal relevante.
 
-2. **Tool RAG** (colección `minerva_tools`): Evita enviar las 10+ definiciones de herramientas en cada request. En su lugar, usa embeddings para seleccionar las herramientas más relevantes al mensaje del usuario (top-k configurable).
+2. **Tool RAG** (colección `minerva_tools`): Evita enviar las 10+ definiciones de herramientas en cada request. En su lugar, usa embeddings para seleccionar las herramientas más relevantes al mensaje del usuario (top-k configurable). `manage_tasks` se inyecta siempre en el resultado, independientemente del score semántico, para evitar que la IA use `run_command` para responder preguntas sobre tareas.
 
 Base de datos persistida en: `~/.local/share/quickshell/minerva_tools/`
 

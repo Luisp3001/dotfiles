@@ -52,10 +52,10 @@ SYSTEM_PROMPT = f"""Eres Minerva, una asistente inteligente integrada en el escr
   - "queue": Agregar una cancion a la cola. Usa "uri" o "query".
   - Si el usuario pide musica de un artista o cancion especifica, usa "play" con query directamente.
   - Requiere Spotify Premium para controles de reproduccion.
-- **Gestión de Tareas** (manage_tasks): Tienes acceso a una base de datos de tareas pendientes del usuario (PostgreSQL).
-  - "add": Para agregar una tarea. Requiere "description". (ej: "comprar leche"). Puedes enviar "due_date" si es para un momento específico (ej: "2026-07-23 15:00:00").
-  - "complete": Para marcarla como completada. Requiere "task_id".
-  - "list": Para listar las tareas pendientes.
+- **Gestión de Tareas** (manage_tasks): Tienes acceso a una base de datos de tareas pendientes del usuario (PostgreSQL). ES TU UNICA FUENTE DE VERDAD para todo lo relacionado con tareas, pendientes y fechas de cobro o vencimiento.
+  - "add": Agregar una tarea. Requiere "description" y opcionalmente "due_date" (formato YYYY-MM-DD HH:MM:SS). Para tareas que se repiten, usa "recurrence" ('daily', 'weekly', 'monthly', 'yearly'), "recurrence_day" (ej: 11 para "el día 11 de cada mes") y "recurrence_month" (1-12, para fijar un mes específico en tareas 'yearly').
+  - "complete": Marcar como completada. Requiere "task_id".
+  - "list": Listar tareas pendientes con su due_date, recurrencia, day y month. USA ESTA ACCION SIEMPRE que el usuario pregunte por sus tareas, pendientes, "¿cuánto falta para X?", "¿cuándo es el próximo cobro?", "¿qué tengo pendiente?", o cualquier pregunta sobre fechas de vencimiento. NO uses run_command ni web_search para responder sobre tareas.
   - El sistema te inyectará automáticamente las tareas pendientes en tu prompt, así que **puedes ser proactiva** y recordarle al usuario sus tareas de manera casual si es un buen momento.
 
 ## Reglas de seguridad
@@ -262,8 +262,7 @@ OLLAMA_TOOLS = [
                         "type": "string",
                         "description": "Nombre del monitor Wayland a capturar (ej: 'DP-1', 'HDMI-A-1'). Omite este parámetro para capturar toda la pantalla."
                     }
-                },
-                "required": []
+                }
             }
         }
     },
@@ -271,14 +270,13 @@ OLLAMA_TOOLS = [
         "type": "function",
         "function": {
             "name": "manage_tasks",
-            "description": "Gestiona la lista de tareas pendientes del usuario en la base de datos PostgreSQL. Permite añadir, listar y completar tareas.",
+            "description": "Gestiona las tareas pendientes del usuario en PostgreSQL. Úsala como fuente de verdad para responder CUALQUIER pregunta sobre tareas, pendientes, fechas de vencimiento, cobros o recordatorios. La acción 'list' devuelve cada tarea con su descripción, due_date, recurrencia, recurrence_day y recurrence_month — úsala cuando el usuario pregunte '¿cuánto falta para X?', '¿cuándo es el próximo cobro?', '¿qué tengo pendiente?' o similar. NO uses run_command ni web_search para responder sobre tareas.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "action": {
                         "type": "string",
-                        "description": "La acción a realizar: 'add', 'complete', 'list'",
-                        "enum": ["add", "complete", "list"]
+                        "description": "La acción a realizar: 'add', 'complete', 'list'"
                     },
                     "description": {
                         "type": "string",
@@ -291,6 +289,18 @@ OLLAMA_TOOLS = [
                     "due_date": {
                         "type": "string",
                         "description": "Fecha y hora límite de la tarea en formato YYYY-MM-DD HH:MM:SS (opcional, solo para 'add')"
+                    },
+                    "recurrence": {
+                        "type": "string",
+                        "description": "Frecuencia de repetición de la tarea (solo para 'add'). Úsalo cuando el usuario mencione que algo se repite periódicamente. Valores: 'daily' (diaria), 'weekly' (semanal), 'monthly' (mensual), 'yearly' (anual)."
+                    },
+                    "recurrence_day": {
+                        "type": "integer",
+                        "description": "Día de anclaje para la recurrencia (solo para 'add'). Para 'monthly'/'yearly': día del mes (1-31), ej: 11 para 'el día 11 de cada mes'. Para 'weekly': día de la semana (0=lunes, 1=martes, ..., 6=domingo)."
+                    },
+                    "recurrence_month": {
+                        "type": "integer",
+                        "description": "Mes de anclaje para la recurrencia (solo para 'add' con 'yearly'). Mes del año (1-12), ej: 3 para marzo."
                     }
                 },
                 "required": ["action"]

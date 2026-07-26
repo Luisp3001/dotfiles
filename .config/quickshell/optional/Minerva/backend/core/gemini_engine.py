@@ -170,8 +170,15 @@ def do_chat_gemini(
                 return
 
             if isinstance(result, ScreenCapture):
-                # Inyectar la captura como mensaje de usuario con imagen (formato OpenAI)
+                # Responder al tool_call con el texto descriptivo para mantener alternancia de roles
                 emit({"type": "tool_result", "tool": tool_name, "result": result.summary_text()})
+                history.append({
+                    "role":         "tool",
+                    "tool_call_id": tc.get("id"),
+                    "name":         tool_name,
+                    "content":      result.summary_text() or "Captura tomada."
+                })
+                # Inyectar la imagen como mensaje de usuario para que el modelo la analice
                 history.append({
                     "role":      "user",
                     "content":   "Aquí está la captura de pantalla que tomé. Analízala y responde.",
@@ -183,7 +190,7 @@ def do_chat_gemini(
                     "role":         "tool",
                     "tool_call_id": tc.get("id"),
                     "name":         tool_name,
-                    "content":      result
+                    "content":      str(result) if result is not None else "OK"
                 })
 
     emit_error("Demasiadas iteraciones de herramientas (límite: 6)")

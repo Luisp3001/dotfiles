@@ -17,6 +17,10 @@ layout(std140, binding = 0) uniform buf {
     float u_speed;
     float u_width;
     float u_height;
+    float u_tintR;
+    float u_tintG;
+    float u_tintB;
+    float u_tintAmount;
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -147,7 +151,7 @@ void main() {
         float coreW = max(1.2, waveAmp * pixScale * 0.16);                 \
         float core  = exp(-distPx * distPx / (coreW * coreW));             \
                                                                             \
-        vec3 wCol = COL * (core * 0.90 + glow * 0.28);                     \
+        vec3 wCol = COL * (core * 0.90);                                   \
                                                                             \
         /* Screen blend: 1 - (1-a)*(1-b) */                                \
         finalColor = 1.0 - (1.0 - finalColor) * (1.0 - wCol);             \
@@ -162,6 +166,14 @@ void main() {
     // Difuminar los bordes izquierdo y derecho para evitar cortes bruscos
     float edgeFade = smoothstep(0.0, 0.15, x) * smoothstep(1.0, 0.85, x);
     finalColor *= edgeFade;
+
+    // ── Color Tinting (para niveles de urgencia de tareas pendientes) ──
+    if (u_tintAmount > 0.001) {
+        vec3 tintCol = vec3(u_tintR, u_tintG, u_tintB);
+        float l = dot(finalColor, vec3(0.299, 0.587, 0.114));
+        vec3 tinted = tintCol * (l * 1.8);
+        finalColor = mix(finalColor, tinted, clamp(u_tintAmount, 0.0, 1.0));
+    }
 
     float lum = dot(finalColor, vec3(0.299, 0.587, 0.114));
     fragColor = vec4(finalColor, lum) * qt_Opacity;

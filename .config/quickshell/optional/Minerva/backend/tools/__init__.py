@@ -41,7 +41,13 @@ def get_relevant_tools(prompt: str, top_k: int = 5) -> list:
     """
     Selecciona las herramientas más relevantes para el prompt usando ChromaDB.
     Si ChromaDB no está disponible, devuelve todas las tools.
+
+    manage_tasks siempre se incluye — es una tool crítica que debe estar disponible
+    para cualquier pregunta sobre tareas, fechas o recordatorios.
     """
+    # Tools que siempre deben estar disponibles independientemente del RAG
+    _ALWAYS_INCLUDE = {"manage_tasks"}
+
     if not _tool_collection or not prompt.strip():
         return OLLAMA_TOOLS
     try:
@@ -51,7 +57,7 @@ def get_relevant_tools(prompt: str, top_k: int = 5) -> list:
         )
         if not results["ids"] or not results["ids"][0]:
             return OLLAMA_TOOLS
-        relevant_names = results["ids"][0]
+        relevant_names = set(results["ids"][0]) | _ALWAYS_INCLUDE
         return [t for t in OLLAMA_TOOLS if t["function"]["name"] in relevant_names]
     except Exception as e:
         print(f"Error consultando ChromaDB: {e}", file=sys.stderr)
@@ -144,11 +150,26 @@ def dispatch_tool(tool_name: str, args: dict) -> "str | _RunCommandPending":
             return RUN_COMMAND_PENDING
 
     elif tool_name == "manage_tasks":
+        try:
+            task_id = int(args["task_id"]) if args.get("task_id") is not None else None
+        except (ValueError, TypeError):
+            task_id = None
+        try:
+            recurrence_day = int(args["recurrence_day"]) if args.get("recurrence_day") is not None else None
+        except (ValueError, TypeError):
+            recurrence_day = None
+        try:
+            recurrence_month = int(args["recurrence_month"]) if args.get("recurrence_month") is not None else None
+        except (ValueError, TypeError):
+            recurrence_month = None
         return tool_manage_tasks(
-            action      = args.get("action", ""),
-            description = args.get("description", ""),
-            task_id     = args.get("task_id"),
-            due_date    = args.get("due_date")
+            action         = args.get("action", ""),
+            description    = args.get("description", ""),
+            task_id        = task_id,
+            due_date       = args.get("due_date"),
+            recurrence     = args.get("recurrence"),
+            recurrence_day = recurrence_day,
+            recurrence_month = recurrence_month,
         )
 
     elif tool_name == "capture_screen":

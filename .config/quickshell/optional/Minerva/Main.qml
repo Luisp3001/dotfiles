@@ -71,6 +71,7 @@ Item {
     property bool   isSpeaking:    false
     property bool   hasPendingTasks: false
     property bool   hasUrgentTasks: false
+    property string taskUrgency: "low"
     property bool   showPendingOrb: false
     property string lastAISnippet: "Minerva"
     property string modelName: aiProvider === "Gemini" ? geminiModel : aiModel
@@ -178,8 +179,15 @@ Item {
         else if (widget.isTranscribing) widget.shellRoot.minervaState = "transcribing"
         else if (widget.isThinking)     widget.shellRoot.minervaState = "thinking"
         else if (widget.isSpeaking)     widget.shellRoot.minervaState = "speaking"
-        else if (widget.showPendingOrb) widget.shellRoot.minervaState = widget.hasUrgentTasks ? "urgent_task" : "pending_task"
-        else                            widget.shellRoot.minervaState = "idle"
+        else if (widget.showPendingOrb) {
+            if (widget.hasUrgentTasks || widget.taskUrgency === "urgent")
+                widget.shellRoot.minervaState = "urgent_task"
+            else if (widget.taskUrgency === "medium")
+                widget.shellRoot.minervaState = "pending_task_medium"
+            else
+                widget.shellRoot.minervaState = "pending_task_low"
+        }
+        else widget.shellRoot.minervaState = "idle"
     }
 
     function onBackendLine(msg) {
@@ -187,7 +195,8 @@ Item {
         switch (msg.type) {
             case "tasks_pending":
                 hasPendingTasks = true
-                hasUrgentTasks = !!msg.urgent
+                taskUrgency = msg.urgency ? msg.urgency : (msg.urgent ? "urgent" : "low")
+                hasUrgentTasks = (taskUrgency === "urgent")
                 showPendingOrb = true
                 pendingOrbTimer.restart()
                 _updateMinervaState()
@@ -195,6 +204,7 @@ Item {
             case "tasks_cleared":
                 hasPendingTasks = false
                 hasUrgentTasks = false
+                taskUrgency = ""
                 showPendingOrb = false
                 pendingOrbTimer.stop()
                 _updateMinervaState()

@@ -163,8 +163,14 @@ Item {
         isTranscribing: root.minervaState === "transcribing"
         isThinking:     root.minervaState === "thinking"
         isSpeaking:     root.minervaState === "speaking"
-        isPendingTask:  root.minervaState === "pending_task"
+        isPendingTask:  root.minervaState === "pending_task" || root.minervaState === "pending_task_low" || root.minervaState === "pending_task_medium"
         isUrgentTask:   root.minervaState === "urgent_task"
+        taskUrgency: {
+            if (root.minervaState === "urgent_task") return "urgent"
+            if (root.minervaState === "pending_task_medium") return "medium"
+            if (root.minervaState === "pending_task_low" || root.minervaState === "pending_task") return "low"
+            return ""
+        }
 
         // Métricas de audio en tiempo real → shader uniforms
         audioRms:   shellRoot ? shellRoot.audioRms   : 0.0

@@ -56,7 +56,7 @@ from backend.core.memory        import memory_collection, MEMORY_AVAILABLE, get_
 from backend.core.ollama_engine import do_chat
 from backend.core.gemini_engine import do_chat_gemini
 from backend.tools              import SYSTEM_PROMPT
-from backend.core.tasks_db      import get_pending_tasks
+from backend.core.tasks_db      import get_pending_tasks, renew_recurring_tasks
 
 # Importaciones opcionales de voz para el handler de toggle_voice
 if VOICE_AVAILABLE:
@@ -200,17 +200,22 @@ def main():
             try:
                 # Polling cada 3 minutos
                 time.sleep(180)
+                # Renovar tareas recurrentes vencidas antes de leer pendientes
+                renew_recurring_tasks()
                 pending = get_pending_tasks()
                 if pending:
-                    urgent = False
+                    urgency = "low"
                     now = datetime.now()
                     for t in pending:
-                        if t.get("due_date"):
-                            # Si vence en menos de 24h o ya venció
-                            if (t["due_date"] - now) < timedelta(hours=24):
-                                urgent = True
+                        due = t.get("due_date")
+                        if due:
+                            diff = due - now
+                            if diff < timedelta(hours=24):
+                                urgency = "urgent"
                                 break
-                    emit({"type": "tasks_pending", "urgent": urgent})
+                            elif diff < timedelta(days=3) and urgency != "urgent":
+                                urgency = "medium"
+                    emit({"type": "tasks_pending", "urgent": (urgency == "urgent"), "urgency": urgency})
                 else:
                     emit({"type": "tasks_cleared"})
             except Exception as e:
