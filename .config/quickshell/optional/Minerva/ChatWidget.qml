@@ -128,29 +128,14 @@ Item {
 
     // ── Helpers de modelo ─────────────────────────────────────────────────
     function onToken(tok) {
-        if (aiWidget.streamingIdx === -1) {
-            aiWidget.msgModel.append({
-                role: "ai", content: "", command: "", cmdStatus: "",
-                needsConfirm: false, needsSudo: false, isSystem: false
-            })
-            aiWidget.streamingIdx = aiWidget.msgModel.count - 1
-            aiWidget.streamingRaw = ""
-        }
-        aiWidget.streamingRaw += tok
-        aiWidget.msgModel.setProperty(aiWidget.streamingIdx, "content", aiWidget.streamingRaw)
+        // Main.qml ya acumula el token en globalMsgModel y gestiona streamingIdx.
+        // Aquí solo hacemos scroll para que el chat siga el streaming.
         scrollToBottom()
     }
 
     function onDone(fullRaw) {
-        if (aiWidget.streamingIdx >= 0) {
-            // Guardar el par completo en el historial
-            aiWidget.conversationHistory.push(
-                { role: "user",      content: aiWidget.currentUserMsg },
-                { role: "assistant", content: fullRaw }
-            )
-        }
-        aiWidget.streamingIdx = -1
-        aiWidget.streamingRaw = ""
+        // Main.qml ya guardó el historial y resetó streamingIdx/streamingRaw.
+        // Solo actualizamos el scroll.
         scrollToBottom()
     }
 
@@ -209,10 +194,7 @@ Item {
     }
 
     function scrollToBottom() {
-        Qt.callLater(function() {
-            var maxY = Math.max(0, chatFlickable.contentHeight - chatFlickable.height)
-            chatFlickable.contentY = maxY
-        })
+        Qt.callLater(function() { chatFlickable.positionViewAtEnd() })
     }
 
     // ── UI ────────────────────────────────────────────────────────────────
@@ -329,104 +311,119 @@ Item {
             width:  parent.width
             height: parent.height - chatHeader.height - inputBar.height
 
-            Flickable {
+            // ListView virtualiza: solo instancia los delegates visibles +
+            // cacheBuffer. Antes (Repeater+Column) se creaban todos de golpe.
+            ListView {
                 id: chatFlickable
                 anchors.fill: parent
-                contentWidth:  width
-                contentHeight: msgsCol.implicitHeight + 20
                 clip: true
                 boundsBehavior: Flickable.StopAtBounds
                 flickableDirection: Flickable.VerticalFlick
-
-            // Columna de mensajes
-            Column {
-                id: msgsCol
-                width: chatFlickable.width
-                topPadding:    10
-                bottomPadding: 10
-                leftPadding:   10
-                rightPadding:  10
+                // ~3 pantallas de buffer: scroll suave sin cargar todo
+                cacheBuffer: height * 3
                 spacing: 8
+                topMargin:    10
+                bottomMargin: 10
+                leftMargin:   10
+                rightMargin:  10
 
-                Repeater {
-                    model: root.aiWidget ? root.aiWidget.msgModel : null
+                // Al abrir el panel, ir directo al último mensaje
+                Component.onCompleted: Qt.callLater(positionViewAtEnd)
+                // Auto-scroll cuando llega un mensaje nuevo
+                onCountChanged: Qt.callLater(positionViewAtEnd)
 
-                    delegate: Item {
-                        id: msgDelegate
-                        width: msgsCol.width - 20
+                model: root.aiWidget ? root.aiWidget.msgModel : null
 
-                        // Altura determinada por el hijo visible
-                        height: {
-                            if (model.role === "user")                        return userBubble.implicitHeight
-                            if (model.role === "ai")                          return aiBubble.implicitHeight
-                            if (model.role === "command" || model.role === "result") return cmdCard.implicitHeight
-                            if (model.isSystem)                               return sysMsg.implicitHeight + 4
-                            return 0
+                delegate: Item {
+                    id: msgDelegate
+                    // ListView necesita width explícito en el delegate
+                    width: chatFlickable.width - 20
+                    height: msgLoader.implicitHeight
+
+                    // Loader: solo instancia el componente correcto según rol.
+                    // Evita crear los 3 tipos de burbuja por cada mensaje.
+                    Loader {
+                        id: msgLoader
+                        width: parent.width
+                        sourceComponent: {
+                            if (model.role === "user")    return userBubbleComp
+                            if (model.role === "ai")      return aiBubbleComp
+                            if (model.role === "command" || model.role === "result") return cmdCardComp
+                            if (model.isSystem)           return sysMsgComp
+                            return null
                         }
+                    }
 
-                        // ── Burbuja usuario ───────────────────────────────
-                        Rectangle {
-                            id: userBubble
-                            visible: model.role === "user"
-                            implicitHeight: visible ? userTxt.implicitHeight + 18 : 0
-                            width: Math.min(userTxt.implicitWidth + 30, msgDelegate.width * 0.82)
-                            anchors.right: parent.right
-                            radius: 16
-                            color: Theme.accent
-
-                            TextEdit {
-                                id: userTxt
-                                anchors.centerIn: parent
-                                width: parent.width - 30
-                                text: model.content
-                                font.family: Theme.fontSans
-                                font.pixelSize: 13
-                                color: "#0d0d0d"
-                                wrapMode: TextEdit.Wrap
-                                readOnly: true
-                                selectByMouse: true
+                    // ── Burbuja usuario ───────────────────────────────────
+                    Component {
+                        id: userBubbleComp
+                        Item {
+                            implicitHeight: _userBubble.implicitHeight
+                            Rectangle {
+                                id: _userBubble
+                                implicitHeight: _userTxt.implicitHeight + 18
+                                width: Math.min(_userTxt.implicitWidth + 30, msgDelegate.width * 0.82)
+                                anchors.right: parent.right
+                                radius: 16
+                                color: Theme.accent
+                                TextEdit {
+                                    id: _userTxt
+                                    anchors.centerIn: parent
+                                    width: parent.width - 30
+                                    text: model.content
+                                    font.family: Theme.fontSans
+                                    font.pixelSize: 13
+                                    color: "#0d0d0d"
+                                    wrapMode: TextEdit.Wrap
+                                    readOnly: true
+                                    selectByMouse: true
+                                }
                             }
                         }
+                    }
 
-                        // ── Burbuja IA ────────────────────────────────────
-                        Rectangle {
-                            id: aiBubble
-                            visible: model.role === "ai"
-                            implicitHeight: visible ? aiTxt.implicitHeight + 18 : 0
-                            width: Math.min(aiTxt.implicitWidth + 30, msgDelegate.width * 0.92)
-                            anchors.left: parent.left
-                            radius: 16
-                            color: Qt.rgba(1, 1, 1, 0.07)
-                            border.width: 1
-                            border.color: Qt.rgba(1, 1, 1, 0.09)
-
-                            TextEdit {
-                                id: aiTxt
-                                anchors.centerIn: parent
-                                width: parent.width - 30
-                                // Cursor parpadeante al final mientras streamea
-                                text: model.content
-                                    + (root.aiWidget && root.aiWidget.streamingIdx === index && root.aiWidget.isThinking ? "▋" : "")
-                                font.family: Theme.fontSans
-                                font.pixelSize: 13
-                                color: Theme.textPrimary
-                                wrapMode: TextEdit.Wrap
-                                textFormat: TextEdit.PlainText
-                                readOnly: true
-                                selectByMouse: true
+                    // ── Burbuja IA ────────────────────────────────────────
+                    Component {
+                        id: aiBubbleComp
+                        Item {
+                            implicitHeight: _aiBubble.implicitHeight
+                            Rectangle {
+                                id: _aiBubble
+                                // Ancho fijo: evita el re-layout costoso de
+                                // implicitWidth cuando wrapMode está activo.
+                                implicitHeight: _aiTxt.implicitHeight + 18
+                                width: msgDelegate.width * 0.92
+                                anchors.left: parent.left
+                                radius: 16
+                                color: Qt.rgba(1, 1, 1, 0.07)
+                                border.width: 1
+                                border.color: Qt.rgba(1, 1, 1, 0.09)
+                                TextEdit {
+                                    id: _aiTxt
+                                    anchors.centerIn: parent
+                                    width: parent.width - 30
+                                    text: model.content
+                                        + (root.aiWidget && root.aiWidget.streamingIdx === index && root.aiWidget.isThinking ? "▋" : "")
+                                    font.family: Theme.fontSans
+                                    font.pixelSize: 13
+                                    color: Theme.textPrimary
+                                    wrapMode: TextEdit.Wrap
+                                    textFormat: TextEdit.PlainText
+                                    readOnly: true
+                                    selectByMouse: true
+                                }
                             }
                         }
+                    }
 
-                        // ── Tarjeta de comando / resultado ────────────────
+                    // ── Tarjeta de comando / resultado ────────────────────
+                    Component {
+                        id: cmdCardComp
                         Rectangle {
-                            id: cmdCard
-                            visible: model.role === "command" || model.role === "result"
-                            implicitHeight: visible ? cardCol.implicitHeight + 20 : 0
+                            implicitHeight: _cardCol.implicitHeight + 20
                             width: msgDelegate.width
-                            anchors.left: parent.left
                             radius: 14
 
-                            // Color de fondo según tipo
                             color: model.role === "result"
                                 ? (model.cmdStatus === "success"
                                    ? Qt.rgba(0.08, 0.28, 0.08, 0.55)
@@ -434,7 +431,6 @@ Item {
                                      ? Qt.rgba(0.32, 0.07, 0.07, 0.55)
                                      : Qt.rgba(0.08, 0.15, 0.32, 0.55))
                                 : Qt.rgba(1, 1, 1, 0.04)
-
                             border.width: 1
                             border.color: model.role === "result"
                                 ? (model.cmdStatus === "success"
@@ -447,18 +443,14 @@ Item {
                                   : Qt.rgba(1, 1, 1, 0.09)
 
                             Column {
-                                id: cardCol
-                                anchors {
-                                    left: parent.left; right: parent.right
-                                    top: parent.top; margins: 12
-                                }
+                                id: _cardCol
+                                anchors { left: parent.left; right: parent.right; top: parent.top; margins: 12 }
                                 spacing: 8
 
-                                // Cabecera de la tarjeta
                                 Row {
                                     spacing: 6
                                     Text {
-                                        id: resultIcon
+                                        id: _resultIcon
                                         text: model.role === "result"
                                             ? (model.cmdStatus === "success" ? "󰄬" : model.cmdStatus === "error" ? "󰅖" : "󰔟")
                                             : model.needsSudo ? "󰌞"
@@ -468,15 +460,13 @@ Item {
                                         font.pixelSize: 13
                                         color: model.role === "result"
                                             ? (model.cmdStatus === "success" ? Theme.success : model.cmdStatus === "error" ? Theme.danger : Theme.accent)
-                                            : (model.needsSudo || model.needsConfirm)
-                                              ? Theme.warning : Theme.accent
+                                            : (model.needsSudo || model.needsConfirm) ? Theme.warning : Theme.accent
                                         anchors.verticalCenter: parent.verticalCenter
-                                        
                                         SequentialAnimation on rotation {
                                             running: model.role === "result" && model.cmdStatus === "running"
                                             loops: Animation.Infinite
                                             NumberAnimation { to: 360; duration: 900; easing.type: Easing.Linear }
-                                            onStopped: resultIcon.rotation = 0
+                                            onStopped: _resultIcon.rotation = 0
                                         }
                                     }
                                     Text {
@@ -484,257 +474,127 @@ Item {
                                             : model.needsSudo ? "Requiere sudo (pkexec)"
                                             : model.needsConfirm ? "Confirmar antes de ejecutar"
                                             : "Ejecutar comando"
-                                        font.family: Theme.fontSans
-                                        font.pixelSize: 11
-                                        font.weight: Font.Bold
-                                        color: Theme.textMuted
-                                        anchors.verticalCenter: parent.verticalCenter
+                                        font.family: Theme.fontSans; font.pixelSize: 11; font.weight: Font.Bold
+                                        color: Theme.textMuted; anchors.verticalCenter: parent.verticalCenter
                                     }
                                 }
 
-                                // Línea del comando
                                 Rectangle {
-                                    width: cardCol.width
-                                    height: cmdLineTxt.implicitHeight + 12
-                                    radius: 8
-                                    color: Qt.rgba(0, 0, 0, 0.35)
-
+                                    width: _cardCol.width; height: _cmdLineTxt.implicitHeight + 12
+                                    radius: 8; color: Qt.rgba(0, 0, 0, 0.35)
                                     TextEdit {
-                                        id: cmdLineTxt
-                                        anchors {
-                                            left: parent.left; right: parent.right
-                                            verticalCenter: parent.verticalCenter
-                                            margins: 10
-                                        }
+                                        id: _cmdLineTxt
+                                        anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter; margins: 10 }
                                         text: "$ " + (model.role === "result" ? model.command : model.content)
-                                        font.family: Theme.fontMono
-                                        font.pixelSize: 12
+                                        font.family: Theme.fontMono; font.pixelSize: 12
                                         color: (model.needsSudo || model.needsConfirm) ? Theme.warning : Theme.accent
-                                        wrapMode: TextEdit.Wrap
-                                        readOnly: true
-                                        selectByMouse: true
+                                        wrapMode: TextEdit.Wrap; readOnly: true; selectByMouse: true
                                     }
                                 }
 
-                                // Output del resultado
                                 Flickable {
                                     visible: model.role === "result" && model.content.length > 0
-                                    width: cardCol.width
-                                    height: Math.min(resultTxtEdit.implicitHeight, 230) // Approx 14 lines max height
-                                    contentWidth: width
-                                    contentHeight: resultTxtEdit.implicitHeight
-                                    clip: true
-                                    boundsBehavior: Flickable.StopAtBounds
-
+                                    width: _cardCol.width
+                                    height: Math.min(_resultTxtEdit.implicitHeight, 230)
+                                    contentWidth: width; contentHeight: _resultTxtEdit.implicitHeight
+                                    clip: true; boundsBehavior: Flickable.StopAtBounds
                                     TextEdit {
-                                        id: resultTxtEdit
-                                        width: parent.width
-                                        text: model.content
-                                        font.family: Theme.fontMono
-                                        font.pixelSize: 11
+                                        id: _resultTxtEdit
+                                        width: parent.width; text: model.content
+                                        font.family: Theme.fontMono; font.pixelSize: 11
                                         color: model.cmdStatus === "success" ? Theme.textPrimary : Theme.danger
-                                        wrapMode: TextEdit.Wrap
-                                        readOnly: true
-                                        selectByMouse: true
+                                        wrapMode: TextEdit.Wrap; readOnly: true; selectByMouse: true
                                     }
                                 }
 
-                                // Botones de acción (pendiente)
                                 Row {
                                     visible: model.role === "command" && model.cmdStatus === "pending"
                                     spacing: 8
-
-                                    // Ejecutar
                                     Rectangle {
-                                        height: 30
-                                        width:  execLbl.implicitWidth + 24
-                                        radius: 8
-                                        color:  execMa.containsMouse
-                                            ? Qt.rgba(0.15, 0.5, 0.15, 0.9)
-                                            : Qt.rgba(0.08, 0.30, 0.08, 0.8)
-                                        border.width: 1
-                                        border.color: Qt.rgba(Theme.success.r, Theme.success.g, Theme.success.b, 0.75)
+                                        height: 30; width: _execLbl.implicitWidth + 24; radius: 8
+                                        color: _execMa.containsMouse ? Qt.rgba(0.15,0.5,0.15,0.9) : Qt.rgba(0.08,0.30,0.08,0.8)
+                                        border.width: 1; border.color: Qt.rgba(Theme.success.r, Theme.success.g, Theme.success.b, 0.75)
                                         Behavior on color { ColorAnimation { duration: 120 } }
-
                                         Row {
-                                            anchors.centerIn: parent
-                                            spacing: 4
-                                            Text {
-                                                text: "󰄬"
-                                                font.family: Theme.fontMono
-                                                font.pixelSize: 11
-                                                color: Theme.success
-                                                anchors.verticalCenter: parent.verticalCenter
-                                            }
-                                            Text {
-                                                id: execLbl
-                                                text: model.needsSudo ? "Ejecutar (sudo)" : "Ejecutar"
-                                                font.family: Theme.fontSans
-                                                font.pixelSize: 12
-                                                color: Theme.success
-                                                anchors.verticalCenter: parent.verticalCenter
-                                            }
+                                            anchors.centerIn: parent; spacing: 4
+                                            Text { text: "󰄬"; font.family: Theme.fontMono; font.pixelSize: 11; color: Theme.success; anchors.verticalCenter: parent.verticalCenter }
+                                            Text { id: _execLbl; text: model.needsSudo ? "Ejecutar (sudo)" : "Ejecutar"; font.family: Theme.fontSans; font.pixelSize: 12; color: Theme.success; anchors.verticalCenter: parent.verticalCenter }
                                         }
-
                                         MouseArea {
-                                            id: execMa
-                                            anchors.fill: parent
-                                            hoverEnabled: true
-                                            cursorShape: Qt.PointingHandCursor
+                                            id: _execMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                                             onClicked: {
-                                                var cmd       = model.content
-                                                var isSudo    = model.needsSudo
-                                                var isDestroy = model.needsConfirm
-
-                                                if (isSudo) {
-                                                    root.aiWidget.msgModel.setProperty(index, "cmdStatus", "running")
-                                                    root.aiWidget.sudoRun(cmd)
-                                                } else if (isDestroy) {
-                                                    // Mostrar diálogo de confirmación destructiva
-                                                    root.aiWidget.pendingCmd    = cmd
-                                                    root.aiWidget.pendingIsSudo = false
-                                                    root.aiWidget.pendingReason = "Este comando puede eliminar datos de forma irreversible"
-                                                    root.aiWidget.showConfirm   = true
-                                                } else {
-                                                    root.aiWidget.msgModel.setProperty(index, "cmdStatus", "running")
-                                                    root.aiWidget.confirmRun(cmd)
-                                                }
+                                                var cmd = model.content; var isSudo = model.needsSudo; var isDestroy = model.needsConfirm
+                                                if (isSudo) { root.aiWidget.msgModel.setProperty(index,"cmdStatus","running"); root.aiWidget.sudoRun(cmd) }
+                                                else if (isDestroy) { root.aiWidget.pendingCmd = cmd; root.aiWidget.pendingIsSudo = false; root.aiWidget.pendingReason = "Este comando puede eliminar datos de forma irreversible"; root.aiWidget.showConfirm = true }
+                                                else { root.aiWidget.msgModel.setProperty(index,"cmdStatus","running"); root.aiWidget.confirmRun(cmd) }
                                             }
                                         }
                                     }
-
-                                    // Cancelar
                                     Rectangle {
-                                        height: 30
-                                        width:  cancelLbl.implicitWidth + 24
-                                        radius: 8
-                                        color:  cancelMa.containsMouse
-                                            ? Qt.rgba(0.4, 0.1, 0.1, 0.6)
-                                            : Qt.rgba(0.22, 0.05, 0.05, 0.5)
-                                        border.width: 1
-                                        border.color: Qt.rgba(Theme.danger.r, Theme.danger.g, Theme.danger.b, 0.5)
+                                        height: 30; width: _cancelLbl.implicitWidth + 24; radius: 8
+                                        color: _cancelMa.containsMouse ? Qt.rgba(0.4,0.1,0.1,0.6) : Qt.rgba(0.22,0.05,0.05,0.5)
+                                        border.width: 1; border.color: Qt.rgba(Theme.danger.r, Theme.danger.g, Theme.danger.b, 0.5)
                                         Behavior on color { ColorAnimation { duration: 120 } }
-
-                                        Text {
-                                            id: cancelLbl
-                                            anchors.centerIn: parent
-                                            text: "Cancelar"
-                                            font.family: Theme.fontSans
-                                            font.pixelSize: 12
-                                            color: Theme.danger
-                                        }
-                                        MouseArea {
-                                            id: cancelMa
-                                            anchors.fill: parent
-                                            hoverEnabled: true
-                                            cursorShape: Qt.PointingHandCursor
-                                            onClicked: root.aiWidget.msgModel.setProperty(index, "cmdStatus", "cancelled")
-                                        }
+                                        Text { id: _cancelLbl; anchors.centerIn: parent; text: "Cancelar"; font.family: Theme.fontSans; font.pixelSize: 12; color: Theme.danger }
+                                        MouseArea { id: _cancelMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.aiWidget.msgModel.setProperty(index,"cmdStatus","cancelled") }
                                     }
                                 }
 
-                                // Estado: ejecutando
                                 Row {
-                                    visible: model.role === "command" && model.cmdStatus === "running"
-                                    spacing: 6
+                                    visible: model.role === "command" && model.cmdStatus === "running"; spacing: 6
                                     Text {
-                                        id: runningIcon
-                                        text: "󰔟"
-                                        font.family: Theme.fontMono
-                                        font.pixelSize: 13
-                                        color: Theme.accent
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        SequentialAnimation on rotation {
-                                            running: parent.visible
-                                            loops: Animation.Infinite
-                                            NumberAnimation { to: 360; duration: 900; easing.type: Easing.Linear }
-                                            onStopped: runningIcon.rotation = 0
-                                        }
+                                        id: _runningIcon; text: "󰔟"; font.family: Theme.fontMono; font.pixelSize: 13; color: Theme.accent; anchors.verticalCenter: parent.verticalCenter
+                                        SequentialAnimation on rotation { running: parent.visible; loops: Animation.Infinite; NumberAnimation { to: 360; duration: 900; easing.type: Easing.Linear } onStopped: _runningIcon.rotation = 0 }
                                     }
-                                    Text {
-                                        text: "Ejecutando…"
-                                        font.family: Theme.fontSans
-                                        font.pixelSize: 12
-                                        color: Theme.accent
-                                        anchors.verticalCenter: parent.verticalCenter
-                                    }
+                                    Text { text: "Ejecutando…"; font.family: Theme.fontSans; font.pixelSize: 12; color: Theme.accent; anchors.verticalCenter: parent.verticalCenter }
                                 }
 
-                                // Estado: cancelado
                                 Row {
-                                    visible: model.role === "command" && model.cmdStatus === "cancelled"
-                                    spacing: 6
-                                    Text {
-                                        text: "󰜺"
-                                        font.family: Theme.fontMono
-                                        font.pixelSize: 12
-                                        color: Theme.textMuted
-                                        anchors.verticalCenter: parent.verticalCenter
-                                    }
-                                    Text {
-                                        text: "Cancelado"
-                                        font.family: Theme.fontSans
-                                        font.pixelSize: 12
-                                        color: Theme.textMuted
-                                        anchors.verticalCenter: parent.verticalCenter
-                                    }
+                                    visible: model.role === "command" && model.cmdStatus === "cancelled"; spacing: 6
+                                    Text { text: "󰜺"; font.family: Theme.fontMono; font.pixelSize: 12; color: Theme.textMuted; anchors.verticalCenter: parent.verticalCenter }
+                                    Text { text: "Cancelado"; font.family: Theme.fontSans; font.pixelSize: 12; color: Theme.textMuted; anchors.verticalCenter: parent.verticalCenter }
                                 }
                             }
                         }
+                    }
 
-                        // ── Mensaje de sistema ────────────────────────────
-                        TextEdit {
-                            id: sysMsg
-                            visible: model.isSystem
-                            anchors.horizontalCenter: parent.horizontalCenter
-                            text: model.content
-                            font.family: Theme.fontSans
-                            font.pixelSize: 11
-                            color: Theme.textMuted
-                            opacity: 0.6
-                            readOnly: true
-                            selectByMouse: true
+                    // ── Mensaje de sistema ────────────────────────────────
+                    Component {
+                        id: sysMsgComp
+                        Item {
+                            implicitHeight: _sysText.implicitHeight + 4
+                            width: msgDelegate.width
+                            TextEdit {
+                                id: _sysText
+                                anchors.horizontalCenter: parent.horizontalCenter
+                                width: parent.width
+                                horizontalAlignment: TextEdit.AlignHCenter
+                                text: model.content
+                                font.family: Theme.fontSans; font.pixelSize: 11
+                                color: Theme.textMuted; opacity: 0.6
+                                readOnly: true; selectByMouse: true
+                            }
                         }
                     }
-                }
-            }
-            } // Flickable
+                } // delegate
 
-            // Estado vacío — overlay centrado sobre el Flickable
-            Column {
-                anchors.centerIn: parent
-                visible: root.aiWidget && root.aiWidget.msgModel.count === 0
-                spacing: 12
-                opacity: 0.45
+                // Estado vacío
+                Column {
+                    anchors.centerIn: parent
+                    visible: chatFlickable.count === 0
+                    spacing: 12; opacity: 0.45
+                    Text { text: "󱜚"; font.family: Theme.fontMono; font.pixelSize: 46; color: Theme.accent; horizontalAlignment: Text.AlignHCenter; anchors.horizontalCenter: parent.horizontalCenter }
+                    Text {
+                        text: root.aiWidget && root.aiWidget.backendReady ? "¿En qué puedo ayudarte?" : "Iniciando Minerva…"
+                        font.family: Theme.fontSans; font.pixelSize: 13; color: Theme.textMuted
+                        horizontalAlignment: Text.AlignHCenter; anchors.horizontalCenter: parent.horizontalCenter
+                    }
+                    Text { text: "Tengo acceso a tu directorio home y búsqueda web"; font.family: Theme.fontSans; font.pixelSize: 11; color: Theme.textMuted; horizontalAlignment: Text.AlignHCenter; anchors.horizontalCenter: parent.horizontalCenter }
+                }
+            } // ListView
 
-                Text {
-                    text: "󱜚"
-                    font.family: Theme.fontMono
-                    font.pixelSize: 46
-                    color: Theme.accent
-                    horizontalAlignment: Text.AlignHCenter
-                    anchors.horizontalCenter: parent.horizontalCenter
-                }
-                Text {
-                    text: root.aiWidget && root.aiWidget.backendReady
-                        ? "¿En qué puedo ayudarte?"
-                        : "Iniciando Minerva…"
-                    font.family: Theme.fontSans
-                    font.pixelSize: 13
-                    color: Theme.textMuted
-                    horizontalAlignment: Text.AlignHCenter
-                    anchors.horizontalCenter: parent.horizontalCenter
-                }
-                Text {
-                    text: "Tengo acceso a tu directorio home y búsqueda web"
-                    font.family: Theme.fontSans
-                    font.pixelSize: 11
-                    color: Theme.textMuted
-                    horizontalAlignment: Text.AlignHCenter
-                    anchors.horizontalCenter: parent.horizontalCenter
-                }
-            }
         }
+
 
         // ── Barra de input ────────────────────────────────────────────────
         Rectangle {
@@ -927,7 +787,7 @@ Item {
             border.color: Qt.rgba(0.95, 0.65, 0.2, 0.55)
 
             // Sombra sutil
-            layer.enabled: true
+            layer.enabled: visible
 
             Column {
                 id: dlgCol

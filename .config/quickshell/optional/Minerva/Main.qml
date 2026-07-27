@@ -215,10 +215,30 @@ Item {
             case "token":
                 isThinking = true
                 _updateMinervaState()
+                // Acumular token en globalMsgModel (por si ChatWidget no está abierto)
+                if (streamingIdx === -1) {
+                    globalMsgModel.append({
+                        role: "ai", content: "", command: "", cmdStatus: "",
+                        needsConfirm: false, needsSudo: false, isSystem: false
+                    })
+                    streamingIdx = globalMsgModel.count - 1
+                    streamingRaw = ""
+                }
+                streamingRaw += (msg.content || "")
+                globalMsgModel.setProperty(streamingIdx, "content", streamingRaw)
                 break
             case "done":
                 isThinking = false
                 _updateMinervaState()
+                // Guardar en historial si no lo hizo ChatWidget (panel cerrado)
+                if (streamingIdx >= 0) {
+                    conversationHistory.push(
+                        { role: "user",      content: currentUserMsg },
+                        { role: "assistant", content: msg.full_response || streamingRaw }
+                    )
+                    streamingIdx = -1
+                    streamingRaw = ""
+                }
                 // Extraer snippet visible (sin líneas TOOL_CALL)
                 if (msg.full_response) {
                     var lines = msg.full_response.split("\n")
@@ -232,6 +252,13 @@ Item {
                 }
                 break
             case "error":
+                if (streamingIdx >= 0) {
+                    streamingIdx = -1
+                    streamingRaw = ""
+                }
+                isThinking = false
+                _updateMinervaState()
+                break
             case "run_command":
                 isThinking = false
                 _updateMinervaState()
@@ -443,7 +470,7 @@ Item {
 
                 Text {
                     anchors.verticalCenter: parent.verticalCenter
-                    text: !widget.backendReady ? "Iniciando Minerva…" : (widget.hasPendingTasks ? "Minerva (Tareas pendientes)" : "Minerva")
+                    text: !widget.backendReady ? "Iniciando Minerva…" : (widget.hasPendingTasks ? "Minerva" : "Minerva")
                     font.family: Theme.fontSans
                     font.pixelSize: 12
                     font.weight:    Font.DemiBold
