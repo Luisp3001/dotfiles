@@ -12,10 +12,11 @@ import sys
 
 import ollama
 
-from .config  import MODEL
-from .io      import emit, emit_error
-from .voice   import voice_mgr, VOICE_AVAILABLE
-from ..tools  import dispatch_tool, get_relevant_tools, OLLAMA_TOOLS, RUN_COMMAND_PENDING
+from .config      import MODEL
+from .io          import emit, emit_error
+from .voice       import voice_mgr, VOICE_AVAILABLE
+from .job_manager import job_mgr, CommandJob
+from ..tools      import dispatch_tool, get_relevant_tools, OLLAMA_TOOLS
 from ..tools.screen import ScreenCapture
 
 
@@ -94,27 +95,30 @@ def do_chat(
             emit({"type": "done", "full_response": full_response})
             return
 
-        # Ollama retorna tool_calls como objetos Pydantic; convertir a dicts para el historial
         calls_dict = [
-            {"function": {"name": tc.function.name, "arguments": tc.function.arguments}}
-            for tc in current_tool_calls
+            {"id": f"tc_{i}", "function": {"name": tc.function.name, "arguments": tc.function.arguments}}
+            for i, tc in enumerate(current_tool_calls)
         ]
         history.append({"role": "assistant", "content": full_response, "tool_calls": calls_dict})
 
-        # Ejecutar herramientas
-        for tc in current_tool_calls:
+        # Ejecutar herramientas — procesamos TODAS antes de decidir si retornar.
+        # Los run_command se acumulan como CommandJob; las demás se añaden al historial de inmediato.
+        pending_jobs = []
+
+        for i, tc in enumerate(current_tool_calls):
             tool_name = tc.function.name
             args      = tc.function.arguments  # ya es dict en ollama-python
+            tc_id     = f"tc_{i}"              # Ollama no provee id, generamos uno
 
             emit({"type": "tool_start", "tool": tool_name})
-            result = dispatch_tool(tool_name, args)
+            result = dispatch_tool(tool_name, args, tool_call_id=tc_id)
 
-            if result is RUN_COMMAND_PENDING:
-                # run_command ya emitió el evento; salir y esperar confirmación del QML
-                return
+            if isinstance(result, CommandJob):
+                # run_command pendiente — acumular y continuar con el resto
+                pending_jobs.append(result)
+                continue
 
             if isinstance(result, ScreenCapture):
-                # Inyectar la captura de pantalla como mensaje de usuario con imagen
                 emit({"type": "tool_result", "tool": tool_name, "result": result.summary_text()})
                 history.append({
                     "role":      "user",
@@ -124,5 +128,11 @@ def do_chat(
             else:
                 emit({"type": "tool_result", "tool": tool_name, "result": result})
                 history.append({"role": "tool", "name": tool_name, "content": result})
+
+        if pending_jobs:
+            # Registrar el turno en el job manager; main.py retomará cuando todos terminen.
+            job_mgr.start_turn([j.job_id for j in pending_jobs])
+            return
+        # Si no hubo run_command, continuar la iteración agentic normalmente
 
     emit_error("Demasiadas iteraciones de herramientas (límite: 6)")

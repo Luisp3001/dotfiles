@@ -55,6 +55,7 @@ from backend.core.voice         import voice_mgr, VOICE_AVAILABLE
 from backend.core.memory        import memory_collection, MEMORY_AVAILABLE, get_memory_context
 from backend.core.ollama_engine import do_chat
 from backend.core.gemini_engine import do_chat_gemini
+from backend.core.job_manager   import job_mgr, CommandJob
 from backend.tools              import SYSTEM_PROMPT
 from backend.core.tasks_db      import get_pending_tasks, renew_recurring_tasks
 
@@ -128,16 +129,16 @@ def _dispatch_chat(history: list, settings: dict) -> None:
         do_chat(history, model=req_model, temperature=req_temp, num_ctx=req_ctx, thinking=req_think)
 
 
-def _run_command_async(cmd: str, is_sudo: bool) -> None:
-    """Ejecuta un comando en un hilo y encola los resultados y salidas parciales."""
+def _run_command_async(job: CommandJob) -> None:
+    """Ejecuta el comando del job en un hilo, actualizando el estado vía job_mgr."""
     def worker():
         try:
-            if is_sudo:
-                command_args = ["pkexec", "bash", "-c", cmd]
-                display_cmd = f"sudo {cmd}"
+            job_mgr.update_status(job.job_id, "running")
+
+            if job.is_sudo:
+                command_args = ["pkexec", "bash", "-c", job.command.removeprefix("sudo ")]
             else:
-                command_args = ["bash", "-c", cmd]
-                display_cmd = cmd
+                command_args = ["bash", "-c", job.command]
 
             process = subprocess.Popen(
                 command_args,
@@ -153,31 +154,36 @@ def _run_command_async(cmd: str, is_sudo: bool) -> None:
             if process.stdout:
                 for line in process.stdout:
                     full_output.append(line)
-                    emit({"type": "command_output", "command": display_cmd, "text": line})
-                
+                    job_mgr.append_output(job.job_id, line)
+                    emit({"type": "command_output", "job_id": job.job_id,
+                          "command": job.command, "text": line})
+
             process.wait()
             returncode = process.returncode
-            out_str = "".join(full_output).strip()
-            truncated_out = out_str[:4096] or "(sin salida)"
-            
+            out_str    = "".join(full_output).strip()
+            truncated  = out_str[:4096] or "(sin salida)"
+
             msg_queue.put(json.dumps({
-                "type": "_internal_cmd_done",
-                "command": display_cmd,
-                "output": truncated_out,
+                "type":       "_internal_cmd_done",
+                "job_id":     job.job_id,
+                "command":    job.command,
+                "output":     truncated,
                 "returncode": returncode,
-                "success": returncode == 0
+                "success":    returncode == 0
             }))
 
         except Exception as e:
             msg_queue.put(json.dumps({
-                "type": "_internal_cmd_done",
-                "command": f"sudo {cmd}" if is_sudo else cmd,
-                "output": str(e),
+                "type":       "_internal_cmd_done",
+                "job_id":     job.job_id,
+                "command":    job.command,
+                "output":     str(e),
                 "returncode": -1,
-                "success": False
+                "success":    False
             }))
 
     threading.Thread(target=worker, daemon=True).start()
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -287,43 +293,86 @@ def main():
 
             _dispatch_chat(current_history, current_settings)
 
-        # ── Confirmación de comando normal ────────────────────────────────────
+        # ── Confirmación de comando normal ──────────────────────────────────────────────────────
         elif msg_type == "run_confirmed":
-            cmd = msg.get("command", "").strip()
-            if not cmd:
+            job_id = msg.get("job_id", "")
+            job    = job_mgr.get(job_id)
+            if not job:
                 continue
-            emit({"type": "command_start", "command": cmd})
-            _run_command_async(cmd, is_sudo=False)
+            emit({"type": "command_start", "job_id": job_id, "command": job.command})
+            _run_command_async(job)
 
-        # ── Comando sudo via pkexec ───────────────────────────────────────────
+        # ── Comando sudo via pkexec ──────────────────────────────────────────────────────
         elif msg_type == "run_sudo":
-            cmd = msg.get("command", "").strip()
-            if not cmd:
+            job_id = msg.get("job_id", "")
+            job    = job_mgr.get(job_id)
+            if not job:
                 continue
-            emit({"type": "command_start", "command": f"sudo {cmd}"})
-            _run_command_async(cmd, is_sudo=True)
+            emit({"type": "command_start", "job_id": job_id, "command": job.command})
+            _run_command_async(job)
 
-        # ── Comando completado (evento interno) ───────────────────────────────
+        # ── Comando completado (evento interno) ─────────────────────────────────────────────
         elif msg_type == "_internal_cmd_done":
-            cmd = msg.get("command", "")
-            out = msg.get("output", "")
+            job_id     = msg.get("job_id", "")
+            out        = msg.get("output", "")
             returncode = msg.get("returncode", -1)
-            success = msg.get("success", False)
+            success    = msg.get("success", False)
+
+            job = job_mgr.get(job_id)
+            if not job:
+                continue
+
+            # Actualizar estado del job
+            job_mgr.set_result(job_id, out, returncode, success)
+
+            # Notificar al frontend
             emit({
                 "type":       "command_result",
-                "command":    cmd,
+                "job_id":     job_id,
+                "command":    job.command,
                 "output":     out,
                 "returncode": returncode,
                 "success":    success
             })
-            # Retomar conversación con el resultado de la tool
-            if current_history and current_history[-1].get("tool_calls"):
-                t_id = current_history[-1]["tool_calls"][-1].get("id", "")
+
+            # Añadir resultado al historial con el tool_call_id correcto
+            if job.tool_call_id:
                 current_history.append({
-                    "role": "tool", "tool_call_id": t_id,
-                    "name": "run_command", "content": out
+                    "role":         "tool",
+                    "tool_call_id": job.tool_call_id,
+                    "name":         "run_command",
+                    "content":      out or "(sin salida)"
                 })
-                _dispatch_chat(current_history, current_settings)
+
+            # Retomar el chat solo cuando TODOS los jobs del turno hayan terminado
+            if job_mgr.all_turn_finished():
+                job_mgr.clear_turn()
+                if current_history:
+                    _dispatch_chat(current_history, current_settings)
+
+        # ── Comando cancelado por el usuario ─────────────────────────────────────────────
+        elif msg_type == "job_cancelled":
+            job_id = msg.get("job_id", "")
+            job    = job_mgr.get(job_id)
+            if not job:
+                continue
+
+            job_mgr.cancel(job_id)
+
+            # Añadir al historial que el comando fue cancelado
+            if job.tool_call_id:
+                current_history.append({
+                    "role":         "tool",
+                    "tool_call_id": job.tool_call_id,
+                    "name":         "run_command",
+                    "content":      "Cancelado por el usuario."
+                })
+
+            # Verificar si todos los demás jobs del turno ya terminaron
+            if job_mgr.all_turn_finished():
+                job_mgr.clear_turn()
+                if current_history:
+                    _dispatch_chat(current_history, current_settings)
 
         # ── Ping ──────────────────────────────────────────────────────────────
         elif msg_type == "ping":

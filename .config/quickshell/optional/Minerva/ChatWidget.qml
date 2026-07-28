@@ -37,77 +37,85 @@ Item {
             case "tool_result":
                 break   // interno, no mostrar
             case "run_command":
-                // Safe commands execute automatically — show as running
+                // Comando seguro: se auto-ejecuta, se muestra como "running"
                 aiWidget.msgModel.append({
                     role: "command", content: msg.command || "", command: msg.command || "",
+                    jobId: msg.job_id || "",
                     cmdStatus: "running", needsConfirm: false, needsSudo: false, isSystem: false
                 })
                 scrollToBottom()
                 if (root.aiWidget && msg.command) {
-                    root.aiWidget.confirmRun(msg.command)
+                    root.aiWidget.confirmRun(msg.command, msg.job_id || "")
                 }
                 break
             case "confirm_required":
-                addCmdCard(msg.command || "", true, false)
+                addCmdCard(msg.command || "", msg.job_id || "", true, false)
                 aiWidget.pendingCmd    = msg.command || ""
+                aiWidget.pendingJobId  = msg.job_id  || ""
                 aiWidget.pendingIsSudo = false
                 aiWidget.pendingReason = msg.reason  || "Comando potencialmente destructivo"
-                // Solo mostrar overlay interno si la barra no lo está manejando
                 if (!(aiWidget.shellRoot && aiWidget.shellRoot.commandApprovalOpen)) {
                     aiWidget.showConfirm = true
                 }
                 break
             case "sudo_required":
-                addCmdCard(msg.command || "", false, true)
+                addCmdCard(msg.command || "", msg.job_id || "", false, true)
                 aiWidget.pendingCmd    = msg.command || ""
+                aiWidget.pendingJobId  = msg.job_id  || ""
                 aiWidget.pendingIsSudo = true
                 aiWidget.pendingReason = "Este comando requiere permisos de administrador (pkexec)"
-                // Solo mostrar overlay interno si la barra no lo está manejando
                 if (!(aiWidget.shellRoot && aiWidget.shellRoot.commandApprovalOpen)) {
                     aiWidget.showConfirm = true
                 }
                 break
-            case "command_start":
+            case "command_start": {
+                // Marcar la command card como "done" buscando por job_id
+                var startJobId = msg.job_id || ""
                 for (var ci = aiWidget.msgModel.count - 1; ci >= 0; ci--) {
                     var citem = aiWidget.msgModel.get(ci)
-                    if (citem.role === "command" && citem.cmdStatus === "running") {
+                    if (citem.role === "command" && citem.jobId === startJobId) {
                         aiWidget.msgModel.setProperty(ci, "cmdStatus", "done")
                         break
                     }
                 }
-                addResultCard(msg.command || "", "", "running")
+                addResultCard(msg.command || "", startJobId, "", "running")
                 break
-            case "command_output":
+            }
+            case "command_output": {
+                // Actualizar la result card correcta por job_id
+                var outJobId = msg.job_id || ""
                 for (var ri = aiWidget.msgModel.count - 1; ri >= 0; ri--) {
                     var ritem = aiWidget.msgModel.get(ri)
-                    if (ritem.role === "result" && ritem.cmdStatus === "running") {
+                    if (ritem.role === "result" && ritem.jobId === outJobId) {
                         aiWidget.msgModel.setProperty(ri, "content", ritem.content + (msg.text || ""))
                         break
                     }
                 }
                 scrollToBottom()
                 break
-            case "command_result":
+            }
+            case "command_result": {
+                // Finalizar la result card correcta por job_id
+                var resJobId = msg.job_id || ""
                 var found = false
                 for (var resi = aiWidget.msgModel.count - 1; resi >= 0; resi--) {
                     var resitem = aiWidget.msgModel.get(resi)
-                    if (resitem.role === "result" && resitem.cmdStatus === "running") {
+                    if (resitem.role === "result" && resitem.jobId === resJobId) {
                         aiWidget.msgModel.setProperty(resi, "cmdStatus", (msg.success !== false) ? "success" : "error")
+                        // Volcar el output solo si la card estaba vacía (sin command_output previo)
+                        if (!resitem.content && msg.output) {
+                            aiWidget.msgModel.setProperty(resi, "content", msg.output)
+                        }
                         found = true
                         break
                     }
                 }
                 if (!found) {
-                    for (var cix = aiWidget.msgModel.count - 1; cix >= 0; cix--) {
-                        var citemx = aiWidget.msgModel.get(cix)
-                        if (citemx.role === "command" && citemx.cmdStatus === "running") {
-                            aiWidget.msgModel.setProperty(cix, "cmdStatus", "done")
-                            break
-                        }
-                    }
-                    addResultCard(msg.command || "", msg.output || "", (msg.success !== false) ? "success" : "error")
+                    // Fallback: crear result card directamente (no llegó command_start)
+                    addResultCard(msg.command || "", resJobId, msg.output || "", (msg.success !== false) ? "success" : "error")
                 }
                 break
+            }
             case "error":
                 if (aiWidget.streamingIdx >= 0) {
                     aiWidget.streamingIdx = -1
@@ -128,36 +136,33 @@ Item {
 
     // ── Helpers de modelo ─────────────────────────────────────────────────
     function onToken(tok) {
-        // Main.qml ya acumula el token en globalMsgModel y gestiona streamingIdx.
-        // Aquí solo hacemos scroll para que el chat siga el streaming.
         scrollToBottom()
     }
 
     function onDone(fullRaw) {
-        // Main.qml ya guardó el historial y resetó streamingIdx/streamingRaw.
-        // Solo actualizamos el scroll.
         scrollToBottom()
     }
 
     function addSystemMsg(text) {
         aiWidget.msgModel.append({
-            role: "system", content: text, command: "", cmdStatus: "",
+            role: "system", content: text, command: "", cmdStatus: "", jobId: "",
             needsConfirm: false, needsSudo: false, isSystem: true
         })
         scrollToBottom()
     }
 
-    function addCmdCard(cmd, needsConfirm, needsSudo) {
+    function addCmdCard(cmd, jobId, needsConfirm, needsSudo) {
         aiWidget.msgModel.append({
-            role: "command", content: cmd, command: cmd, cmdStatus: "pending",
+            role: "command", content: cmd, command: cmd, jobId: jobId,
+            cmdStatus: "pending",
             needsConfirm: needsConfirm, needsSudo: needsSudo, isSystem: false
         })
         scrollToBottom()
     }
 
-    function addResultCard(cmd, output, status) {
+    function addResultCard(cmd, jobId, output, status) {
         aiWidget.msgModel.append({
-            role: "result", content: output, command: cmd,
+            role: "result", content: output, command: cmd, jobId: jobId,
             cmdStatus: status,
             needsConfirm: false, needsSudo: false, isSystem: false
         })
@@ -189,6 +194,7 @@ Item {
         aiWidget.streamingIdx    = -1
         aiWidget.streamingRaw    = ""
         aiWidget.pendingCmd      = ""
+        aiWidget.pendingJobId    = ""
         aiWidget.showConfirm     = false
         if (root.aiWidget) root.aiWidget.cancelRun()
     }
@@ -523,10 +529,11 @@ Item {
                                         MouseArea {
                                             id: _execMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                                             onClicked: {
-                                                var cmd = model.content; var isSudo = model.needsSudo; var isDestroy = model.needsConfirm
-                                                if (isSudo) { root.aiWidget.msgModel.setProperty(index,"cmdStatus","running"); root.aiWidget.sudoRun(cmd) }
-                                                else if (isDestroy) { root.aiWidget.pendingCmd = cmd; root.aiWidget.pendingIsSudo = false; root.aiWidget.pendingReason = "Este comando puede eliminar datos de forma irreversible"; root.aiWidget.showConfirm = true }
-                                                else { root.aiWidget.msgModel.setProperty(index,"cmdStatus","running"); root.aiWidget.confirmRun(cmd) }
+                                                var cmd = model.content; var jobId = model.jobId || ""
+                                                var isSudo = model.needsSudo; var isDestroy = model.needsConfirm
+                                                if (isSudo) { root.aiWidget.msgModel.setProperty(index,"cmdStatus","running"); root.aiWidget.sudoRun(cmd, jobId) }
+                                                else if (isDestroy) { root.aiWidget.pendingCmd = cmd; root.aiWidget.pendingJobId = jobId; root.aiWidget.pendingIsSudo = false; root.aiWidget.pendingReason = "Este comando puede eliminar datos de forma irreversible"; root.aiWidget.showConfirm = true }
+                                                else { root.aiWidget.msgModel.setProperty(index,"cmdStatus","running"); root.aiWidget.confirmRun(cmd, jobId) }
                                             }
                                         }
                                     }
@@ -536,7 +543,13 @@ Item {
                                         border.width: 1; border.color: Qt.rgba(Theme.danger.r, Theme.danger.g, Theme.danger.b, 0.5)
                                         Behavior on color { ColorAnimation { duration: 120 } }
                                         Text { id: _cancelLbl; anchors.centerIn: parent; text: "Cancelar"; font.family: Theme.fontSans; font.pixelSize: 12; color: Theme.danger }
-                                        MouseArea { id: _cancelMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.aiWidget.msgModel.setProperty(index,"cmdStatus","cancelled") }
+                                        MouseArea {
+                                            id: _cancelMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                                            onClicked: {
+                                                root.aiWidget.msgModel.setProperty(index, "cmdStatus", "cancelled")
+                                                if (model.jobId) root.aiWidget.cancelJob(model.jobId)
+                                            }
+                                        }
                                     }
                                 }
 
@@ -898,18 +911,19 @@ Item {
                             onClicked: {
                                 if (!root.aiWidget) return
                                 root.aiWidget.showConfirm = false
-                                // Marcar la tarjeta como "running"
+                                var pJobId = root.aiWidget.pendingJobId || ""
+                                // Marcar la tarjeta como "running" buscando por jobId
                                 for (var i = root.aiWidget.msgModel.count - 1; i >= 0; i--) {
-                                    if (root.aiWidget.msgModel.get(i).role === "command" &&
-                                        root.aiWidget.msgModel.get(i).content === root.aiWidget.pendingCmd) {
+                                    var item = root.aiWidget.msgModel.get(i)
+                                    if (item.role === "command" && item.jobId === pJobId) {
                                         root.aiWidget.msgModel.setProperty(i, "cmdStatus", "running")
                                         break
                                     }
                                 }
                                 if (root.aiWidget.pendingIsSudo) {
-                                    root.aiWidget.sudoRun(root.aiWidget.pendingCmd)
+                                    root.aiWidget.sudoRun(root.aiWidget.pendingCmd, pJobId)
                                 } else {
-                                    root.aiWidget.confirmRun(root.aiWidget.pendingCmd)
+                                    root.aiWidget.confirmRun(root.aiWidget.pendingCmd, pJobId)
                                 }
                             }
                         }

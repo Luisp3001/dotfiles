@@ -91,6 +91,7 @@ Item {
     property int    streamingIdx: -1
     property string streamingRaw: ""
     property string pendingCmd: ""
+    property string pendingJobId: ""
     property bool   pendingIsSudo: false
     property string pendingReason: ""
     property bool   showConfirm: false
@@ -369,11 +370,12 @@ Item {
         widget.pendingImage = ""
     }
 
-    function confirmRun(cmd) { sendToBackend({ type: "run_confirmed", command: cmd }) }
-    function cancelRun()     { sendToBackend({ type: "cancel" }) }
-    function sudoRun(cmd)    { sendToBackend({ type: "run_sudo",      command: cmd }) }
-    function toggleVoice()   { sendToBackend({ type: "toggle_voice" }) }
-    function stopTTS()       { sendToBackend({ type: "stop_tts" }) }
+    function confirmRun(cmd, jobId) { sendToBackend({ type: "run_confirmed", job_id: jobId || "", command: cmd }) }
+    function cancelRun()            { sendToBackend({ type: "cancel" }) }
+    function sudoRun(cmd, jobId)    { sendToBackend({ type: "run_sudo",      job_id: jobId || "", command: cmd }) }
+    function cancelJob(jobId)       { sendToBackend({ type: "job_cancelled", job_id: jobId || "" }) }
+    function toggleVoice()          { sendToBackend({ type: "toggle_voice" }) }
+    function stopTTS()              { sendToBackend({ type: "stop_tts" }) }
 
     // ── IPC Handler (qs ipc call minerva) ─────────────────────────────────
     IpcHandler {

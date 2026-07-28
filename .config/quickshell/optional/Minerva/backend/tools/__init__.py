@@ -22,6 +22,7 @@ from .tasks         import tool_manage_tasks
 from ..core.memory  import chroma_client, CHROMADB_AVAILABLE
 from ..core.io      import classify_cmd, emit
 from ..core.config  import HOME
+from ..core.job_manager import job_mgr, CommandJob  # noqa: F401
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Colección ChromaDB para RAG de tools
@@ -64,15 +65,9 @@ def get_relevant_tools(prompt: str, top_k: int = 5) -> list:
         return OLLAMA_TOOLS
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Sentinel para herramientas que requieren confirmación externa
-# ─────────────────────────────────────────────────────────────────────────────
+# RUN_COMMAND_PENDING conservado por compatibilidad — ya no se usa internamente.
+# Los engines ahora detectan CommandJob por isinstance().
 class _RunCommandPending:
-    """
-    Valor centinela retornado por dispatch_tool() cuando run_command
-    emitió una solicitud de confirmación (sudo / destructive / normal)
-    y el engine debe salir del loop de herramientas.
-    """
     pass
 
 RUN_COMMAND_PENDING = _RunCommandPending()
@@ -81,15 +76,15 @@ RUN_COMMAND_PENDING = _RunCommandPending()
 # ─────────────────────────────────────────────────────────────────────────────
 # Despachador centralizado
 # ─────────────────────────────────────────────────────────────────────────────
-def dispatch_tool(tool_name: str, args: dict) -> "str | _RunCommandPending":
+def dispatch_tool(tool_name: str, args: dict, tool_call_id: str = "") -> "str | CommandJob | ScreenCapture":
     """
     Ejecuta la herramienta indicada con los argumentos dados.
 
     Retorna:
-      - str  → resultado listo para agregar al historial como rol 'tool'
-      - RUN_COMMAND_PENDING → la herramienta es run_command y ya emitió el
-        evento apropiado (run_command / confirm_required / sudo_required).
-        El engine debe hacer return inmediatamente para esperar confirmación.
+      - str         → resultado listo para agregar al historial como rol 'tool'
+      - CommandJob  → la herramienta es run_command; el job fue registrado y el
+                      engine debe acumular todos los jobs del turno antes de retornar.
+      - ScreenCapture → captura de pantalla; el engine la inyecta como imagen.
     """
     if tool_name == "list_dir":
         return tool_list_dir(args.get("path", HOME))
@@ -134,20 +129,25 @@ def dispatch_tool(tool_name: str, args: dict) -> "str | _RunCommandPending":
         cmd = args.get("command", "").strip()
         cls = classify_cmd(cmd)
         if cls == "sudo":
-            clean = re.sub(r"^\s*sudo\s+", "", cmd)
-            emit({"type": "sudo_required", "command": clean})
-            return RUN_COMMAND_PENDING
+            clean      = re.sub(r"^\s*sudo\s+", "", cmd)
+            display    = f"sudo {clean}"
+            job        = job_mgr.create(tool_call_id, display, is_sudo=True)
+            emit({"type": "sudo_required", "job_id": job.job_id, "command": clean})
+            return job
         elif cls == "destructive":
+            job = job_mgr.create(tool_call_id, cmd, is_sudo=False)
             emit({
                 "type":    "confirm_required",
+                "job_id":  job.job_id,
                 "command": cmd,
                 "reason":  "Este comando puede eliminar o modificar datos de forma irreversible"
             })
-            return RUN_COMMAND_PENDING
+            return job
         else:
-            # Comandos safe: ejecutar directamente delegando a QML para auto-confirm
-            emit({"type": "run_command", "command": cmd})
-            return RUN_COMMAND_PENDING
+            # Comandos safe: el QML hace auto-confirm vía confirmRun
+            job = job_mgr.create(tool_call_id, cmd, is_sudo=False)
+            emit({"type": "run_command", "job_id": job.job_id, "command": cmd})
+            return job
 
     elif tool_name == "manage_tasks":
         try:

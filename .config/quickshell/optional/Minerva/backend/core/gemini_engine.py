@@ -14,10 +14,72 @@ import urllib.request
 
 from .io     import emit, emit_error
 from .voice  import voice_mgr, VOICE_AVAILABLE
-from ..tools import dispatch_tool, get_relevant_tools, OLLAMA_TOOLS, RUN_COMMAND_PENDING
+from .job_manager import job_mgr, CommandJob
+from ..tools import dispatch_tool, get_relevant_tools, OLLAMA_TOOLS
 from ..tools.screen import ScreenCapture
 
 _GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+
+
+def _split_concatenated_calls(raw_name: str, raw_args: str, known_names: set) -> list:
+    """
+    Gemini 2.5-flash con thinking a veces fusiona múltiples tool_calls en uno solo,
+    concatenando nombres ("run_commandrun_commandlist_dir") y argumentos
+    ('{"command":"ls"}{"command":"df -h"}{"path":"/"}').
+
+    Intenta separar en [(name1, args_dict1), (name2, args_dict2), ...].
+    Devuelve [] si la función parece ser un tool_call normal (no concatenado).
+    """
+    # Si el nombre es exactamente uno de los conocidos, no hay concatenación
+    if raw_name in known_names:
+        return []
+
+    # Intentar separar el nombre usando los nombres conocidos (orden greedy, mayor primero)
+    sorted_names = sorted(known_names, key=len, reverse=True)
+    names_found = []
+    remaining = raw_name
+    while remaining:
+        matched = False
+        for n in sorted_names:
+            if remaining.startswith(n):
+                names_found.append(n)
+                remaining = remaining[len(n):]
+                matched = True
+                break
+        if not matched:
+            return []  # no se pudo parsear, retornar vacío
+
+    if len(names_found) <= 1:
+        return []  # solo un nombre, no hay concatenación
+
+    # Separar los argumentos JSON (múltiples objetos JSON concatenados)
+    args_list = []
+    decoder = json.JSONDecoder()
+    pos = 0
+    raw_args = raw_args.strip()
+    while pos < len(raw_args):
+        # Avanzar whitespace
+        while pos < len(raw_args) and raw_args[pos] in " \t\n\r":
+            pos += 1
+        if pos >= len(raw_args):
+            break
+        try:
+            obj, end_pos = decoder.raw_decode(raw_args, pos)
+            args_list.append(obj)
+            pos = end_pos
+        except json.JSONDecodeError:
+            return []  # no se pudo parsear, abandonar
+
+    # Si el número de args coincide con el de nombres, emparejar
+    if len(args_list) == len(names_found):
+        return list(zip(names_found, args_list))
+
+    # Si hay más nombres que args, rellenar los faltantes con {}
+    if len(args_list) < len(names_found):
+        args_list += [{}] * (len(names_found) - len(args_list))
+        return list(zip(names_found, args_list))
+
+    return []
 
 
 def do_chat_gemini(
@@ -129,6 +191,19 @@ def do_chat_gemini(
                                             current_tool_calls[idx]["function"][fk] += fv
                                         else:
                                             current_tool_calls[idx]["function"][fk] = fv
+                                elif k == "id":
+                                    # El id puede llegar en varios chunks; si ya hay uno diferente,
+                                    # probablemente es un tool call nuevo sin índice — incrementar.
+                                    existing = current_tool_calls[idx].get("id", "")
+                                    if existing and v and not v.startswith(existing) and not existing.startswith(v):
+                                        # id diferente → es un tool_call nuevo
+                                        current_tool_calls.append({
+                                            "id":       v,
+                                            "type":     "function",
+                                            "function": {"name": "", "arguments": ""}
+                                        })
+                                    else:
+                                        current_tool_calls[idx]["id"] = (existing + v) if v else existing
                                 elif isinstance(v, str):
                                     current_tool_calls[idx].setdefault(k, "")
                                     current_tool_calls[idx][k] += v
@@ -152,9 +227,57 @@ def do_chat_gemini(
             emit({"type": "done", "full_response": full_response})
             return
 
-        history.append({"role": "assistant", "content": full_response, "tool_calls": current_tool_calls})
+        # ── Post-proceso: separar tool_calls concatenados por Gemini thinking ────
+        # Gemini 2.5 Flash con thinking puede fusionar M tool_calls en uno solo,
+        # concatenando nombres y argumentos. Detectamos y separamos estos casos.
+        expanded_tool_calls = []
+        known_tool_names = {t["function"]["name"] for t in dynamic_tools}
 
-        # Ejecutar herramientas
+        for tc in current_tool_calls:
+            raw_name = tc["function"].get("name", "")
+            raw_args = tc["function"].get("arguments", "")
+
+            # Intentar separar nombres concatenados: "run_commandrun_commandlist_dir"
+            # Detectar si el nombre contiene repeticiones de nombres de tools conocidas
+            parts = _split_concatenated_calls(raw_name, raw_args, known_tool_names)
+            if parts:
+                for i, (p_name, p_args) in enumerate(parts):
+                    new_tc = dict(tc)
+                    new_tc["id"] = tc["id"] + (f"_{i}" if i > 0 else "")
+                    new_tc["function"] = {"name": p_name, "arguments": json.dumps(p_args)}
+                    expanded_tool_calls.append(new_tc)
+            else:
+                expanded_tool_calls.append(tc)
+
+        current_tool_calls = expanded_tool_calls
+
+        # Filtrar tool_calls sin ID válido o sin nombre (resultado del streaming anómalo de Gemini)
+        current_tool_calls = [
+            tc for tc in current_tool_calls 
+            if tc.get("id") and tc.get("function", {}).get("name")
+        ]
+
+        # Sin tool calls válidos → respuesta final
+        if not current_tool_calls:
+            if VOICE_AVAILABLE and buffer_frase.strip() and not voice_mgr.tts_stop_event.is_set():
+                clean_frase = buffer_frase.replace("*", "").replace("#", "").strip()
+                if clean_frase:
+                    voice_mgr.tts_queue.put(clean_frase)
+            emit({"type": "done", "full_response": full_response})
+            return
+
+        # Guardar la respuesta del assistant.
+        # IMPORTANTE: Gemini rechaza content="" cuando hay tool_calls — usar None en ese caso.
+        history.append({
+            "role":       "assistant",
+            "content":    full_response or None,
+            "tool_calls": current_tool_calls
+        })
+
+        # Ejecutar herramientas — procesamos TODAS antes de decidir si retornar.
+        # Los run_command se acumulan como CommandJob; las demás se añaden al historial de inmediato.
+        pending_jobs = []
+
         for tc in current_tool_calls:
             tool_name = tc["function"]["name"]
             try:
@@ -162,23 +285,23 @@ def do_chat_gemini(
             except (json.JSONDecodeError, TypeError):
                 args = {}
 
+            tc_id = tc.get("id", "")
             emit({"type": "tool_start", "tool": tool_name})
-            result = dispatch_tool(tool_name, args)
+            result = dispatch_tool(tool_name, args, tool_call_id=tc_id)
 
-            if result is RUN_COMMAND_PENDING:
-                # run_command ya emitió el evento; salir y esperar confirmación del QML
-                return
+            if isinstance(result, CommandJob):
+                # run_command pendiente — acumular y continuar con el resto
+                pending_jobs.append(result)
+                continue
 
             if isinstance(result, ScreenCapture):
-                # Responder al tool_call con el texto descriptivo para mantener alternancia de roles
                 emit({"type": "tool_result", "tool": tool_name, "result": result.summary_text()})
                 history.append({
                     "role":         "tool",
-                    "tool_call_id": tc.get("id"),
+                    "tool_call_id": tc_id,
                     "name":         tool_name,
                     "content":      result.summary_text() or "Captura tomada."
                 })
-                # Inyectar la imagen como mensaje de usuario para que el modelo la analice
                 history.append({
                     "role":      "user",
                     "content":   "Aquí está la captura de pantalla que tomé. Analízala y responde.",
@@ -188,9 +311,15 @@ def do_chat_gemini(
                 emit({"type": "tool_result", "tool": tool_name, "result": result})
                 history.append({
                     "role":         "tool",
-                    "tool_call_id": tc.get("id"),
+                    "tool_call_id": tc_id,
                     "name":         tool_name,
                     "content":      str(result) if result is not None else "OK"
                 })
+
+        if pending_jobs:
+            # Registrar el turno en el job manager; main.py retomará cuando todos terminen.
+            job_mgr.start_turn([j.job_id for j in pending_jobs])
+            return
+        # Si no hubo run_command, continuar la iteración agentic normalmente
 
     emit_error("Demasiadas iteraciones de herramientas (límite: 6)")
