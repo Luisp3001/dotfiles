@@ -2,4 +2,4 @@
 
 killall quickshell
 sleep 1
-quickshell -d &
+quickshell -d --path ~/.config/minerva_shell &

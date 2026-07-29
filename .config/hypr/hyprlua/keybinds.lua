@@ -2,13 +2,12 @@ local mainMod = "SUPER"
 local terminal = "kitty"
 local browser = "firefox"
 local fileManager = "dolphin"
-local menu = "qs ipc call shell toggleLauncher"
-local wallpaper = "qs ipc call shell toggleWallpaper"
-local screenshot = "qs ipc call shell launchScreenshot"
-local overview = "qs ipc call shell toggleOverview"
+local menu = "qs --path ~/.config/minerva_shell ipc call shell toggleLauncher"
+local wallpaper = "qs --path ~/.config/minerva_shell ipc call shell toggleWallpaper"
+local screenshot = "qs --path ~/.config/minerva_shell ipc call shell launchScreenshot"
 local scripts = "~/.config/hypr/scripts_hypr/launcher.sh --script"
 local minerva = "qs ipc call minerva toggle_voice"
-local screenrec = '/home/luisp/.config/quickshell/optional/screenrec/wl_screenrec_ctl.sh open-selector -- --audio --audio-device "alsa_output.pci-0000_00_1f.3-platform-skl_hda_dsp_generic.HiFi__Headphones__sink.monitor"'
+local screenrec = '/home/luisp/.config/minerva_shell/optional/screenrec/wl_screenrec_ctl.sh open-selector -- --audio --audio-device "alsa_output.pci-0000_00_1f.3-platform-skl_hda_dsp_generic.HiFi__Headphones__sink.monitor"'
 local _zoom = 1.0
 local function set_zoom(delta)
     return function()
@@ -43,7 +42,6 @@ hl.bind(mainMod .. "+ SHIFT + S", hl.dsp.exec_cmd(screenshot))
 hl.bind(mainMod .. " + backslash", hl.dsp.exec_cmd(scripts))
 hl.bind(mainMod .. " + space", hl.dsp.exec_cmd(menu))
 hl.bind(mainMod .. " + V", hl.dsp.exec_cmd("clipse-gui"))
-hl.bind("ALT + Tab", hl.dsp.exec_cmd(overview))
 hl.bind("CTRL + SHIFT + E", hl.dsp.exec_cmd(screenrec))
 
 -- Binds move focus

@@ -132,4 +132,7 @@ export PYENV_ROOT="$HOME/.pyenv"
 eval "$(pyenv init -)"
 export PATH="$HOME/.npm-global/bin:$PATH"
 
+export QML2_IMPORT_PATH="$HOME/.config/minerva_shell${QML2_IMPORT_PATH:+:$QML2_IMPORT_PATH}"
+export QML_IMPORT_PATH="$HOME/.config/minerva_shell${QML_IMPORT_PATH:+:$QML_IMPORT_PATH}"
+
 
