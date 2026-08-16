@@ -12,10 +12,48 @@ end
 
 local is_on_ac = check_power()
 
+if hl.plugin.hyprglass then
+    local hg = hl.plugin.hyprglass
+
+    hg.config({
+        enabled = true,
+        default_theme = "light",
+        default_preset = "apple",
+        layers = { enabled = 0 },
+    })
+
+    -- Presets
+    hg.preset("clear", {
+        glass_opacity = 0.6,
+        blur_strength = 1.5,
+        dark = { brightness = 0.9 },
+    })
+
+    hg.preset("contrasted", {
+        inherits = "high_contrast",
+        contrast = 1.2,
+        adaptive_dim = 1.5,
+        dark = { tint_color = 0x02142aa9 },
+    })
+
+    hg.preset("apple", {
+        blur_strength = 0,
+        blur_iterations = 0,
+        refraction_strength = 0.6,
+        chromatic_aberration = 0.7,
+        fresnel_strength = 0.8,
+        specular_strength = 0.8,
+        edge_thickness = 0.08,
+        lens_distortion = 0.9,
+        dark = { brightness = 0.82, contrast = 0.90, saturation = 0.80, vibrancy = 0.15, adaptive_dim = 0.4 },
+        light = { brightness = 1, contrast = 1.5, saturation = 0.80, vibrancy = 0.12 },
+    })
+end
+
 hl.config({
     general = {
         gaps_in = 10,
-        gaps_out = 20,
+        gaps_out = 10,
         border_size = 3,
 
         col = {
