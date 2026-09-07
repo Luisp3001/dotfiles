@@ -10,8 +10,6 @@ local function check_power()
     return true
 end
 
-local is_on_ac = check_power()
-
 if hl.plugin.hyprglass then
     local hg = hl.plugin.hyprglass
 
@@ -35,7 +33,7 @@ if hl.plugin.hyprglass then
         adaptive_dim = 1.5,
         dark = { tint_color = 0x02142aa9 },
     })
-
+        
     hg.preset("apple", {
         blur_strength = 0,
         blur_iterations = 0,
@@ -46,14 +44,17 @@ if hl.plugin.hyprglass then
         edge_thickness = 0.08,
         lens_distortion = 0.9,
         dark = { brightness = 0.82, contrast = 0.90, saturation = 0.80, vibrancy = 0.15, adaptive_dim = 0.4 },
-        light = { brightness = 1, contrast = 1.5, saturation = 0.80, vibrancy = 0.12 },
+        light = { brightness = 1, contrast = 2, saturation = 0.80, vibrancy = 0.12 },
     })
 end
+
+local is_on_ac = check_power()
 
 hl.config({
     general = {
         gaps_in = 10,
-        gaps_out = 10,
+        gaps_out = 15,
+        float_gaps = 15,
         border_size = 3,
 
         col = {
@@ -78,6 +79,8 @@ hl.config({
             enabled = true,
             new_optimizations = true,
             ignore_opacity = false,
+            acrylic = {
+            }
         },
 
         shadow = {

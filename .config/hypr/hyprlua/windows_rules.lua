@@ -6,7 +6,6 @@ hl.window_rule({
   float = true,
   size = "1024 600",
   center = true,
-  no_blur = true,
   tag = "+hyprglass_enabled"
 })
 
@@ -15,7 +14,8 @@ hl.window_rule({
   match = {
     class = "Spotify"
   },
-  opacity = "1"
+  opacity = "1",
+  idle_inhibit = "focus"
 })
 
 hl.window_rule({

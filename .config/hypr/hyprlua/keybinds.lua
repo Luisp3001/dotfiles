@@ -2,12 +2,16 @@ local mainMod = "SUPER"
 local terminal = "kitty"
 local browser = "firefox"
 local fileManager = "dolphin"
-local menu = "qs --path ~/.config/minerva_shell ipc call shell toggleLauncher"
-local wallpaper = "qs --path ~/.config/minerva_shell ipc call shell toggleWallpaper"
-local screenshot = "qs --path ~/.config/minerva_shell ipc call shell launchScreenshot"
-local scripts = "~/.config/hypr/scripts_hypr/launcher.sh --script"
-local minerva = "qs ipc call minerva toggle_voice"
-local screenrec = '/home/luisp/.config/minerva_shell/optional/screenrec/wl_screenrec_ctl.sh open-selector -- --audio --audio-device "alsa_output.pci-0000_00_1f.3-platform-skl_hda_dsp_generic.HiFi__Headphones__sink.monitor"'
+local shell_path = "quickshell -p ~/.config/minerva_shell "
+
+local menu = shell_path.. "ipc call shell toggleLauncher"
+local control_center = shell_path .. "ipc call shell toggleControlCenter"
+local wallpaper = shell_path .. "ipc call shell toggleWallpaper"
+local screenshot = shell_path .."ipc call shell launchScreenshot"
+local toggle_minerva = shell_path .. "ipc call shell toggleMinerva"
+local power_menu = shell_path .. "ipc call shell togglePowerMenu"
+
+
 local _zoom = 1.0
 local function set_zoom(delta)
     return function()
@@ -26,23 +30,22 @@ hl.config({
 
 -- Binds generales
 
+hl.bind(mainMod .. " + backslash", hl.dsp.exec_cmd(power_menu))
 hl.bind(mainMod .. " + Q", hl.dsp.exec_cmd(terminal))
 hl.bind(mainMod .. " + C", hl.dsp.window.close())
 hl.bind(mainMod .. " + P", hl.dsp.exec_cmd(wallpaper))
-hl.bind(mainMod .. " + period", hl.dsp.exec_cmd(minerva))
-hl.bind(mainMod .. " + M", hl.dsp.exit())
+hl.bind(mainMod .. " + M", hl.dsp.exec_cmd(toggle_minerva))
 hl.bind(mainMod .. " + E", hl.dsp.exec_cmd(fileManager))
 hl.bind(mainMod .. " + B", hl.dsp.exec_cmd(browser))
-hl.bind(mainMod .. " + period", hl.dsp.exec_cmd("pidof hypremoji || hypremoji"))
 hl.bind(mainMod .. " + T", hl.dsp.window.float({action = "toggle"}))
 hl.bind(mainMod .. " + J", hl.dsp.layout("togglesplit"))
 hl.bind(mainMod .. " + F", hl.dsp.window.fullscreen({mode = "maximized"}))
 hl.bind(mainMod .. " + SHIFT + F", hl.dsp.window.fullscreen({mode = "fullscreen"}))
-hl.bind(mainMod .. "+ SHIFT + S", hl.dsp.exec_cmd(screenshot))
-hl.bind(mainMod .. " + backslash", hl.dsp.exec_cmd(scripts))
+hl.bind(mainMod .. " + SHIFT + S", hl.dsp.exec_cmd(screenshot))
+hl.bind(mainMod .. " + RETURN", hl.dsp.exec_cmd(control_center))
 hl.bind(mainMod .. " + space", hl.dsp.exec_cmd(menu))
 hl.bind(mainMod .. " + V", hl.dsp.exec_cmd("clipse-gui"))
-hl.bind("CTRL + SHIFT + E", hl.dsp.exec_cmd(screenrec))
+hl.bind("CTRL + SHIFT + R", hl.dsp.exec_cmd("killall quickshell && " .. shell_path))
 
 -- Binds move focus
 hl.bind(mainMod .. " + right",  hl.dsp.focus({ direction = "right"}))
