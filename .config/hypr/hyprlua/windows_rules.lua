@@ -6,7 +6,6 @@ hl.window_rule({
   float = true,
   size = "1024 600",
   center = true,
-  tag = "+hyprglass_enabled"
 })
 
 hl.window_rule({
