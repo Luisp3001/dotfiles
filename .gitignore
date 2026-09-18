@@ -1,2 +1,3 @@
-.config/quickshell
+monitors.conf/
+monitors.lua/
 .venv
