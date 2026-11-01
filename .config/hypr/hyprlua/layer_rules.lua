@@ -6,7 +6,7 @@ hl.layer_rule({ match = { namespace = "gtk-layer-shell" }, blur = false })
 hl.layer_rule({ match = { namespace = "gtk4-layer-shell" }, blur = false })
 hl.layer_rule({ match = { namespace = "minerva-bar" }, blur = false, ignore_alpha = 0 }) 
 hl.layer_rule({ match = { namespace = "minerva-shell" }, blur = false, ignore_alpha = 0.1  }) 
- 
+hl.layer_rule({ match = { namespace = "kwybars" }, blur = false, animation="fade" }) 
 
 
 
