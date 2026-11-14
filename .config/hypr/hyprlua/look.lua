@@ -32,16 +32,19 @@ hl.config({
     decoration = {
         active_opacity = 1,
         -- Si está en AC (corriente), usa los valores originales, si no (batería), usa valores reducidos.
-        rounding = is_on_ac and 12 or 3,
+        rounding = is_on_ac and 10 or 5,
         rounding_power = is_on_ac and 3 or 2,
 
         blur = {
-            size = is_on_ac and 4 or 3,
-            passes = is_on_ac and 3 or 1,
+            size = is_on_ac and 5 or 3,
+            passes = is_on_ac and 4 or 1,
             enabled = true,
             new_optimizations = true,
             ignore_opacity = false,
-            variant = "kawase"
+            variant = "drops",
+            aurora = {
+                intensity = 1,
+            }
         },
 
         shadow = {
